@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from . import FORMAT_VERSION
 from .cache import CacheReader
-from .common import pack, write_json
+from .common import pack, unpack, write_json
 from .conversion import convert_bundle, initialize_worker
 from .planner import plan
 from .scanner import Scanner
@@ -34,12 +34,14 @@ def export_assets(
     reader: CacheReader,
     output: Path,
     conversion_cache: Path,
+    workers: int | None = None,
 ) -> dict[int, dict[str, Any]]:
     by_file = collections.defaultdict(list)
     for record in selection:
         by_file[record["source"]].append(record)
     results, errors, reused = {}, [], 0
-    workers = min(4, os.process_cpu_count() or 1)
+    if workers is None:
+        workers = min(4, os.process_cpu_count() or 1)
     tasks = iter(sorted(by_file.items(), key=lambda item: -len(item[1])))
     with (
         tqdm(
@@ -154,6 +156,13 @@ def write_catalogs(planned: dict[str, Any], output: Path) -> None:
     )
 
 
+def scan_build(cache: Path, output: Path, work: Path) -> None:
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
+    Scanner(cache, work, output).run()
+
+
 def extract_build(
     build: str,
     entry: dict[str, Any],
@@ -161,15 +170,26 @@ def extract_build(
     output: Path,
     work: Path,
     conversion_cache: Path = Path("conversions"),
+    workers: int | None = None,
 ) -> dict[str, Any]:
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
-    scanner = Scanner(cache, work, output)
-    metadata = scanner.run()
+    scan_build(cache, output, work)
+    return finish_build(build, entry, cache, output, work, conversion_cache, workers)
+
+
+def finish_build(
+    build: str,
+    entry: dict[str, Any],
+    cache: Path,
+    output: Path,
+    work: Path,
+    conversion_cache: Path = Path("conversions"),
+    workers: int | None = None,
+) -> dict[str, Any]:
+    metadata = unpack((work / "scan.msgpack").read_bytes())
+    reader = CacheReader(cache, work / "bundles")
     planned = plan(metadata, work, output)
     exported = export_assets(
-        planned.pop("selection"), scanner.reader, output, conversion_cache
+        planned.pop("selection"), reader, output, conversion_cache, workers
     )
     for oid, result in exported.items():
         planned["objects"][oid][2].update(result)
