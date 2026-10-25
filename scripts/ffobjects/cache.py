@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import lzma
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,6 +16,16 @@ from unitypack.utils import BinaryReader
 def configure_unitypack() -> None:
     if getattr(ObjectPointer, "_ffobjects_compatibility", False):
         return
+
+    def filter_manager_warnings(record: logging.LogRecord) -> bool:
+        return not (
+            record.levelno == logging.WARNING
+            and record.module == "asset"
+            and record.msg == "%r absent from structs.dat"
+            and record.args in ((7,), (31,), (35,), (46,), (63,), (127,))
+        )
+
+    logging.getLogger().addFilter(filter_manager_warnings)
     original_load = ObjectPointer.load
 
     def load(pointer: ObjectPointer, reader: BinaryReader) -> None:
