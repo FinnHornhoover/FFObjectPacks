@@ -1,25 +1,28 @@
 # FFObjectPacks
 
-FusionFall models, textures, animations and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks). Outputs use GLB geometry, lossless WebP, source animation curves and compact terrain data.
-
-## Contents
+FusionFall models, textures, animations and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks).
 
 | Folder | Contents |
 |---|---|
-| `models/` | Monster, nano, NPC, player, item and prop indexes; shared geometry, skin data and clothing bone maps |
-| `animations/` | Shared source clips, indexes and model bindings |
-| `textures/` | Shared WebP files and original-path index |
-| `areas/` | Scenes, heightfields and grass/detail data |
+| `models/` | Entity indexes, GLB geometry, hierarchies, skin weights and clothing rigs |
+| `animations/` | Source curves, clip indexes and model bindings |
+| `textures/` | Lossless WebP images and original-path index |
+| `areas/` | Scenes, compact heightfields and detail data |
 | `metadata/` | Materials, references and coverage |
 
-Start with `manifest.json`. GLBs contain geometry; descriptors supply hierarchies and material bindings. See [FORMAT.md](FORMAT.md) for loader details.
+Start with `manifest.json`. [FORMAT.md](FORMAT.md) describes the loader contract.
 
 ## Releases
 
-FFInfoPacks publishes first, then triggers this repo. ObjectPacks discovers the latest published InfoPacks release and uses its tag and ZIP filenames to match builds, revisions and nicknames. Download settings come from the current InfoPacks config.
+FFInfoPacks publishes first, then triggers this repo. Run **Create Release with Artifacts** manually with no inputs to do the same. ObjectPacks discovers the latest InfoPacks release and config; tags, revisions and ZIP names match. An existing matching release skips unless `FORMAT_VERSION` changes. ObjectPacks never triggers InfoPacks.
 
-Run **Create Release with Artifacts** manually with no inputs, or use `gh workflow run release.yml`. An already matching published release skips the build when its `FORMAT_VERSION` also matches. Changing `FORMAT_VERSION` rebuilds and replaces the ZIPs under the same release tag. One job installs dependencies, downloads, extracts and uploads each build on the Actions runner, then publishes. Fixed builds copy their nonfixed ZIP; they do not repeat downloads or extraction. ObjectPacks never triggers an InfoPacks build.
+One Rust binary downloads, extracts, packages and uploads builds sequentially. Downloads use five connections; asset conversion uses up to four threads. Shared conversions are reused within the run. Fixed builds copy the nonfixed ZIP. Every ZIP is self-contained. Progress is logged every five seconds during work.
 
-Builds compile C++ object decoding and bulk scanning, and use up to four conversion processes. Metadata loading, terrain encoding and finishing remain in Python. While one build finishes, the next downloads and scans, then waits; only one build is prepared ahead. One CPU is reserved for preparation during overlap. Shared conversions are reused across builds within the run; every ZIP remains self-contained.
+## Development
 
-Missing cache content is listed in `metadata/coverage.json`. Assets are extracted as-is; use matching InfoPacks data for entity selection.
+```sh
+cargo build --release --locked
+cargo run --release -- extract CACHE OUTPUT --build beta-20100104 --revision 17
+```
+
+`release` runs the GitHub pipeline using `gh`, `GH_TOKEN`, `GITHUB_REPOSITORY` and `GITHUB_SHA`. Linux builds need `pkg-config`, `liblzma-dev` and `zlib1g-dev`. Image operations, BC decoding and WebP encoding use Rust crates; legacy Unity reading and the pack layout live in `src/`.

@@ -10,54 +10,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - run: pip install 'PyYAML>=6,<7' httpx tqdm
-
-      - name: Check latest InfoPacks release
-        id: prepare
-        run: python scripts/release.py
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Install extraction dependencies
-        if: steps.prepare.outputs.skip_release != 'true'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native library headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libmagickwand-dev
-          python -m pip install -r requirements.txt
-          python scripts/build_native.py
-
-      - name: Prepare release
-        if: steps.prepare.outputs.skip_release != 'true'
+          sudo apt-get install -y --no-install-recommends pkg-config liblzma-dev zlib1g-dev
+      - name: Compile
+        run: cargo build --release --locked
+      - name: Build and release packs
+        run: target/release/ffobjectpacks release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
-          RELEASE_NAME: ${{ steps.prepare.outputs.release_name }}
-          INFO_URL: ${{ steps.prepare.outputs.info_url }}
-        run: |
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft \
-              --target "$GITHUB_SHA" --title "$RELEASE_NAME" \
-              --notes "3D assets for [FFInfoPacks $RELEASE_TAG]($INFO_URL)."
-
-      - name: Build and upload archives
-        if: steps.prepare.outputs.skip_release != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
-        run: python scripts/build_objects.py
-
-      - name: Publish release
-        if: steps.prepare.outputs.skip_release != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
-          INFO_URL: ${{ steps.prepare.outputs.info_url }}
-          FORMAT_VERSION: ${{ steps.prepare.outputs.format_version }}
-        run: |
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest \
-            --notes "3D assets for [FFInfoPacks $RELEASE_TAG]($INFO_URL).
-
-          Object pack format: $FORMAT_VERSION"

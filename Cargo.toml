@@ -1,0 +1,33 @@
+[package]
+name = "ffobjectpacks"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "FusionFall offline cache to wiki object packs"
+
+[dependencies]
+anyhow = "1"
+image = { version = "0.25", default-features = false }
+texture2ddecoder = "0.1"
+clap = { version = "4", features = ["derive"] }
+flate2 = { version = "1", default-features = false, features = ["zlib"] }
+futures-util = "0.3"
+hex = "0.4"
+indexmap = { version = "2", features = ["serde"] }
+rayon = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rmp-serde = "1"
+scraper = "0.24"
+rmpv = { version = "1", features = ["with-serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "time"] }
+webp = { version = "0.3", default-features = false }
+xz2 = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
