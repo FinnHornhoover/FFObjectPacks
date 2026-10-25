@@ -117,6 +117,9 @@ class CacheReader:
                 asset = Asset.from_file(buffer)
                 asset.objects
                 self.fallback.setdefault(asset.format, {}).update(asset.tree.type_trees)
+        # Legacy formats 6 and 7 share schemas; pointer decoding uses the asset format.
+        for tid, tree in self.fallback.get(7, {}).items():
+            self.fallback.setdefault(6, {}).setdefault(tid, tree)
 
     def buffers(self, path: Path) -> Iterator[tuple[str, io.BytesIO, str]]:
         if self.spool is None:
