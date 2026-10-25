@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -38,7 +40,15 @@ def content_file(root: Path, folder: str, data: bytes, extension: str) -> str:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_bytes(data)
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(data)
+                os.fchmod(stream.fileno(), 0o644)
+                stream.close()
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
     return relative
 
 

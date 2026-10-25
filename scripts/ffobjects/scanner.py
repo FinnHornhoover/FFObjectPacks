@@ -11,7 +11,8 @@ from tqdm import tqdm
 from unitypack.object import ObjectInfo, ObjectPointer
 
 from .animations import describe_clip, rig_type
-from .cache import CacheReader
+from .cache import CacheReader, NonBundleError
+from .native import read_object
 from .common import content_file, pack, write_json
 from .terrain import encode_details, encode_heights
 
@@ -41,7 +42,7 @@ COMPONENT_TYPES = {4, 23, 26, 33, 108, 111, 137, 154}
 
 class Scanner:
     def __init__(self, root: Path, work: Path, output: Path) -> None:
-        self.reader = CacheReader(root)
+        self.reader = CacheReader(root, work / "bundles")
         self.work, self.output = work, output
         self.keys: list[tuple[str, int]] = []
         self.keymap: dict[tuple[str, int], int] = {}
@@ -117,7 +118,20 @@ class Scanner:
 
     def describe(self, obj: ObjectInfo) -> dict[str, Any]:
         tid = obj.type_id
-        raw = obj.read()
+        fields = None
+        if tid == 43:
+            fields = frozenset({"m_Name"})
+        elif tid in (27, 28, 89):
+            fields = frozenset(
+                {
+                    "m_Name",
+                    "m_Width",
+                    "m_Height",
+                    "m_TextureFormat",
+                    "m_TextureSettings",
+                }
+            )
+        raw = read_object(obj, fields)
         raw = getattr(raw, "_obj", raw)
         if tid == 74:
             data = self.convert(raw)
@@ -278,6 +292,8 @@ class Scanner:
                             self.scenes.append({"asset": aid, "roots": scene_roots})
                         del asset
                         gc.collect()
+                except NonBundleError:
+                    self.errors.append({"kind": "non-bundle", "file": source})
                 except Exception as error:
                     # Bundle failures cannot be treated as a successful, complete extraction.
                     raise RuntimeError(f"Cannot scan {path.name}: {error}") from error

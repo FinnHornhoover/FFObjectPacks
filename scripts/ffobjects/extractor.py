@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import collections
-import gc
+import multiprocessing
+import os
 import json
 import re
 import shutil
 import struct
-from collections.abc import Iterable
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from tqdm import tqdm
-from unitypack.engine.texture import Texture2D
 
 from . import FORMAT_VERSION
 from .cache import CacheReader
-from .common import content_file, pack, write_json
-from .geometry import mesh_glb, texture_webp
+from .common import pack, write_json
+from .conversion import convert_bundle, initialize_worker
 from .planner import plan
 from .scanner import Scanner
 
@@ -31,44 +30,17 @@ COORDINATES = {
 
 
 def export_assets(
-    selection: list[dict[str, Any]], reader: CacheReader, output: Path
+    selection: list[dict[str, Any]],
+    reader: CacheReader,
+    output: Path,
+    conversion_cache: Path,
 ) -> dict[int, dict[str, Any]]:
     by_file = collections.defaultdict(list)
     for record in selection:
         by_file[record["source"]].append(record)
-    results, errors, pending = {}, [], {}
-
-    def convert(record: dict[str, Any], value: Any) -> dict[str, Any]:
-        if record["type"] == 43:
-            data, auxiliary, metadata = mesh_glb(value)
-            result = {
-                **metadata,
-                "file": content_file(output, "models/geometry", data, ".glb"),
-            }
-            if auxiliary:
-                result["skin_data"] = content_file(
-                    output, "models/skins", auxiliary, ".msgpack"
-                )
-            return result
-        if record["type"] == 27:
-            value = Texture2D(getattr(value, "_obj", value))
-        data, dimensions = texture_webp(value)
-        return {
-            "file": content_file(output, "textures", data, ".webp"),
-            "dimensions": list(dimensions),
-            "rgba_exact": True,
-        }
-
-    def harvest(futures: Iterable[Future[dict[str, Any]]]) -> None:
-        for future in futures:
-            record = pending.pop(future)
-            try:
-                results[record["object"]] = future.result()
-            except Exception as error:
-                errors.append({**record, "error": str(error)})
-            progress.set_postfix(errors=len(errors), refresh=False)
-            progress.update(1)
-
+    results, errors, reused = {}, [], 0
+    workers = min(4, os.process_cpu_count() or 1)
+    tasks = iter(sorted(by_file.items(), key=lambda item: -len(item[1])))
     with (
         tqdm(
             total=len(selection),
@@ -76,29 +48,41 @@ def export_assets(
             unit="asset",
             mininterval=2,
         ) as progress,
-        ThreadPoolExecutor(max_workers=4) as pool,
+        ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=initialize_worker,
+            initargs=(
+                reader.root,
+                reader.spool,
+                reader.fallback,
+                output,
+                conversion_cache,
+            ),
+        ) as pool,
     ):
-        for filename, records in by_file.items():
-            wanted = collections.defaultdict(list)
-            for record in records:
-                wanted[record["asset"]].append(record)
-            for asset, _ in reader.assets(reader.root / filename):
-                for record in wanted.get(asset.name.lower(), []):
-                    try:
-                        value = asset.objects[record["path_id"]].read()
-                        pending[pool.submit(convert, record, value)] = record
-                    except Exception as error:
-                        errors.append({**record, "error": str(error)})
-                        progress.set_postfix(errors=len(errors), refresh=False)
-                        progress.update(1)
-                    if len(pending) >= 16:
-                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
-                        harvest(done)
-                del asset
-            gc.collect()
-        if pending:
-            done, _ = wait(pending)
-            harvest(done)
+        pending = {}
+
+        def submit() -> None:
+            item = next(tasks, None)
+            if item is not None:
+                filename, records = item
+                pending[pool.submit(convert_bundle, filename, records)] = len(records)
+
+        for _ in range(workers):
+            submit()
+        while pending:
+            done, _ = wait(pending, timeout=2, return_when=FIRST_COMPLETED)
+            for future in done:
+                count = pending.pop(future)
+                converted, failures, hits = future.result()
+                results.update(converted)
+                errors.extend(failures)
+                reused += hits
+                progress.update(count)
+                submit()
+            progress.set_postfix(reused=reused, errors=len(errors), refresh=False)
+            progress.refresh()
     expected = {record["object"] for record in selection}
     if errors or set(results) != expected:
         write_json(
@@ -171,7 +155,12 @@ def write_catalogs(planned: dict[str, Any], output: Path) -> None:
 
 
 def extract_build(
-    build: str, entry: dict[str, Any], cache: Path, output: Path, work: Path
+    build: str,
+    entry: dict[str, Any],
+    cache: Path,
+    output: Path,
+    work: Path,
+    conversion_cache: Path = Path("conversions"),
 ) -> dict[str, Any]:
     if output.exists():
         shutil.rmtree(output)
@@ -179,7 +168,9 @@ def extract_build(
     scanner = Scanner(cache, work, output)
     metadata = scanner.run()
     planned = plan(metadata, work, output)
-    exported = export_assets(planned.pop("selection"), scanner.reader, output)
+    exported = export_assets(
+        planned.pop("selection"), scanner.reader, output, conversion_cache
+    )
     for oid, result in exported.items():
         planned["objects"][oid][2].update(result)
     write_catalogs(planned, output)

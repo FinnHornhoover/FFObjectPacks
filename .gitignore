@@ -12,3 +12,6 @@ output/
 artifacts/
 work/
 config/
+
+*.so
+conversions/

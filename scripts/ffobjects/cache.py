@@ -12,6 +12,9 @@ from unitypack.asset import Asset
 from unitypack.object import ObjectInfo, ObjectPointer
 from unitypack.utils import BinaryReader
 
+from .common import pack, unpack
+from .native import read_object
+
 
 def configure_unitypack() -> None:
     if getattr(ObjectPointer, "_ffobjects_compatibility", False):
@@ -36,13 +39,22 @@ def configure_unitypack() -> None:
         pointer.path_id = ((first >> 16) << 32) | reader.read_uint()
 
     # UnityPack truncates object IDs and misreads format-7 pointer file IDs.
+    ObjectInfo._read = read_object
     ObjectInfo.epath_id = property(lambda obj: obj.path_id)
     ObjectPointer.load = load
     ObjectPointer._ffobjects_compatibility = True
 
 
+class NonBundleError(ValueError):
+    pass
+
+
 def members(path: Path) -> Iterator[tuple[str, io.BytesIO, str]]:
     with path.open("rb") as stream:
+        prefix = stream.read(16)
+        if not prefix.startswith((b"Unity", b"streamed\0")):
+            raise NonBundleError(f"Not a Unity bundle: {path.name}")
+        stream.seek(0)
         header = BinaryReader(stream, endian=">")
         signature = header.read_string()
         if signature not in ("UnityWeb", "UnityRaw", "streamed"):
@@ -76,9 +88,17 @@ def members(path: Path) -> Iterator[tuple[str, io.BytesIO, str]]:
 
 
 class CacheReader:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        spool: Path | None = None,
+        fallback: dict[int, dict[int, Any]] | None = None,
+    ) -> None:
         configure_unitypack()
-        self.root = root
+        self.root, self.spool = root, spool
+        if fallback is not None:
+            self.fallback = fallback
+            return
         self.fallback: dict[int, dict[int, Any]] = {}
         available = {path.relative_to(root).as_posix() for path in self.files()}
         # Original-client scenes omit their trees. Use trees from this same cache,
@@ -91,15 +111,38 @@ class CacheReader:
             path = root / name
             if name not in available:
                 continue
-            for member, buffer, version in members(path):
+            for member, buffer, version in self.buffers(path):
                 if member.lower().endswith(".dll"):
                     continue
                 asset = Asset.from_file(buffer)
                 asset.objects
                 self.fallback.setdefault(asset.format, {}).update(asset.tree.type_trees)
 
-    def assets(self, path: Path) -> Iterator[tuple[Asset, str]]:
+    def buffers(self, path: Path) -> Iterator[tuple[str, io.BytesIO, str]]:
+        if self.spool is None:
+            yield from members(path)
+            return
+        directory = self.spool / path.relative_to(self.root)
+        index = directory / "index.msgpack"
+        if index.exists():
+            for name, filename, version in unpack(index.read_bytes()):
+                buffer = io.BytesIO((directory / filename).read_bytes())
+                buffer.name = name
+                yield name, buffer, version
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        entries = []
         for name, buffer, version in members(path):
+            if name.lower().endswith(".dll"):
+                continue
+            filename = f"{len(entries)}.bin"
+            (directory / filename).write_bytes(buffer.getbuffer())
+            entries.append([name, filename, version])
+            yield name, buffer, version
+        index.write_bytes(pack(entries))
+
+    def assets(self, path: Path) -> Iterator[tuple[Asset, str]]:
+        for name, buffer, version in self.buffers(path):
             if name.lower().endswith(".dll"):
                 continue
             asset = Asset.from_file(buffer)

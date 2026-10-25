@@ -96,23 +96,11 @@ async def resolve_cache(
 ) -> tuple[dict[str, Any], dict[str, str]]:
     if "api-url" in entry:
         api = entry["api-url"].rstrip("/")
-        seen = set()
-
-        async def version(identifier: str) -> tuple[dict[str, Any], dict[str, str]]:
-            if identifier in seen:
-                raise ValueError("Cyclic parent cache manifests")
-            seen.add(identifier)
-            data = await get_json_info(client, f"{api}/versions/{identifier}.json")
-            files = (
-                (await version(data["parent_uuid"]))[1]
-                if data.get("parent_uuid")
-                else {}
-            )
-            files.update(cache_files(data, data["asset_url"]))
-            return data, files
-
         info = await get_json_info(client, api)
-        return await version(info["game_versions"][0])
+        version = await get_json_info(
+            client, f"{api}/versions/{info['game_versions'][0]}.json"
+        )
+        return version, cache_files(version, version["asset_url"])
     base_url = entry["url"].rstrip("/")
     response = await client.get(f"{base_url}/")
     response.raise_for_status()

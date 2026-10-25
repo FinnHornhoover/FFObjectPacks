@@ -7,7 +7,13 @@ from ffobjects.common import load_config
 from ffobjects.extractor import extract_build
 
 
-def main(config_path: Path, asset_root: Path, out_root: Path, work_root: Path) -> None:
+def main(
+    config_path: Path,
+    asset_root: Path,
+    out_root: Path,
+    work_root: Path,
+    conversion_cache: Path,
+) -> None:
     config = load_config(config_path)
     out_root.mkdir(parents=True, exist_ok=True)
     for cache in sorted(asset_root.iterdir()):
@@ -18,6 +24,7 @@ def main(config_path: Path, asset_root: Path, out_root: Path, work_root: Path) -
                 cache,
                 out_root / cache.name,
                 work_root / cache.name,
+                conversion_cache,
             )
 
 
@@ -29,5 +36,6 @@ if __name__ == "__main__":
     parser.add_argument("assets", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--work-root", type=Path, default=Path("work"))
+    parser.add_argument("--conversion-cache", type=Path, default=Path("conversions"))
     args = parser.parse_args()
-    main(args.config, args.assets, args.output, args.work_root)
+    main(args.config, args.assets, args.output, args.work_root, args.conversion_cache)

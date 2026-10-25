@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from PIL import Image, ImageOps
 from unitypack.engine.mesh import Mesh
 from unitypack.engine.texture import Texture2D
-from unitypack.export import CompressedMeshData
+from unitypack.utils import BitReader
 
 from .common import pack
 
@@ -30,8 +30,8 @@ def packed_ints(value: dict[str, Any]) -> list[int]:
         return []
     if not value["m_BitSize"]:
         return [0] * count
-    decoder = CompressedMeshData.__new__(CompressedMeshData)
-    return decoder.read_bits(value)
+    reader = BitReader(value["m_Data"], value["m_BitSize"])
+    return [reader.read() for _ in range(count)]
 
 
 def packed_floats(value: dict[str, Any]) -> list[float]:
@@ -65,7 +65,7 @@ def encode_glb(document: dict[str, Any], binary: bytes = b"") -> bytes:
 
 
 def mesh_glb(mesh: Mesh | dict[str, Any]) -> tuple[bytes, bytes | None, dict[str, Any]]:
-    raw = plain(mesh)
+    raw = mesh if isinstance(mesh, dict) else plain(mesh)
     compressed = bool(raw.get("m_MeshCompression", 0))
     channels = raw.get("m_CompressedMesh", {})
     if compressed:
@@ -260,14 +260,22 @@ def mesh_glb(mesh: Mesh | dict[str, Any]) -> tuple[bytes, bytes | None, dict[str
     )
 
 
-def texture_webp(texture: Texture2D) -> tuple[bytes, tuple[int, int]]:
+def texture_image(texture: Texture2D) -> Image.Image:
     image = texture.image
     if image is None:
         raise ValueError("Empty source texture")
-    image = ImageOps.flip(image).convert("RGBA")
+    return ImageOps.flip(image).convert("RGBA")
+
+
+def image_webp(image: Image.Image) -> bytes:
     output = io.BytesIO()
-    image.save(output, format="WEBP", lossless=True, quality=100, method=4, exact=True)
+    image.save(output, format="WEBP", lossless=True, quality=80, method=1, exact=True)
     data = output.getvalue()
     if Image.open(io.BytesIO(data)).convert("RGBA").tobytes() != image.tobytes():
         raise ValueError("Lossless WebP roundtrip failed")
-    return data, image.size
+    return data
+
+
+def texture_webp(texture: Texture2D) -> tuple[bytes, tuple[int, int]]:
+    image = texture_image(texture)
+    return image_webp(image), image.size
