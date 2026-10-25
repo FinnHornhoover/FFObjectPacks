@@ -20,6 +20,6 @@ FFInfoPacks publishes first, then triggers this repo. ObjectPacks discovers the 
 
 Run **Create Release with Artifacts** manually with no inputs, or use `gh workflow run release.yml`. An already matching published release skips the build when its `FORMAT_VERSION` also matches. Changing `FORMAT_VERSION` rebuilds and replaces the ZIPs under the same release tag. One job installs dependencies, downloads, extracts and uploads each build on the Actions runner, then publishes. Fixed builds copy their nonfixed ZIP; they do not repeat downloads or extraction. ObjectPacks never triggers an InfoPacks build.
 
-Builds compile a C++ decoder and use up to four conversion processes. While one build finishes, the next downloads and scans, then waits; only one build is prepared ahead. One CPU is reserved for preparation during overlap. Shared conversions are reused across builds within the run; every ZIP remains self-contained.
+Builds compile C++ object decoding and bulk scanning, and use up to four conversion processes. Metadata loading, terrain encoding and finishing remain in Python. While one build finishes, the next downloads and scans, then waits; only one build is prepared ahead. One CPU is reserved for preparation during overlap. Shared conversions are reused across builds within the run; every ZIP remains self-contained.
 
 Missing cache content is listed in `metadata/coverage.json`. Assets are extracted as-is; use matching InfoPacks data for entity selection.

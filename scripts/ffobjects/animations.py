@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -16,35 +15,6 @@ RIG_FIELDS = {
 }
 
 NodeTable = dict[int, tuple[int, int, dict[str, Any]]]
-
-
-def rig_type(fields: Iterable[str]) -> str | None:
-    fields = set(fields)
-    return next(
-        (name for name, required in RIG_FIELDS.items() if required <= fields), None
-    )
-
-
-def describe_clip(
-    data: dict[str, Any], relative: str, paths: dict[str, int]
-) -> dict[str, Any]:
-    targets = set()
-    curves = []
-    for name, tracks in data.items():
-        if not name.endswith("Curves") or not isinstance(tracks, list) or not tracks:
-            continue
-        curves.append(name)
-        for track in tracks:
-            path = track.get("path", track.get("m_Path"))
-            if isinstance(path, str):
-                targets.add(paths.setdefault(path, len(paths)))
-    return {
-        "name": data.get("m_Name", ""),
-        "file": relative,
-        "sample_rate": data.get("m_SampleRate"),
-        "curve_types": curves,
-        "paths": sorted(targets),
-    }
 
 
 def collect_bindings(
