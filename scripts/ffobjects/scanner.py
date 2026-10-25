@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from tqdm import tqdm
 from unitypack.object import ObjectInfo, ObjectPointer
 
 from .cache import CacheReader
@@ -135,8 +136,17 @@ class Scanner:
     def run(self) -> dict[str, Any]:
         self.work.mkdir(parents=True, exist_ok=True)
         logging.getLogger("unitypack").setLevel(logging.ERROR)
-        with (self.work / "nodes.msgpack").open("wb") as stream:
-            for path in self.reader.files():
+        with (
+            (self.work / "nodes.msgpack").open("wb") as stream,
+            tqdm(
+                self.reader.files(),
+                desc=f"{self.reader.root.name}: scan",
+                unit="file",
+                mininterval=2,
+            ) as progress,
+        ):
+            for path in progress:
+                progress.set_postfix_str(path.name, refresh=False)
                 # Download everything; audio-only bundles have no preview dependencies.
                 if "music" in path.name.lower() or "fusound" in path.name.lower():
                     continue
@@ -208,7 +218,9 @@ class Scanner:
                 except Exception as error:
                     # Bundle failures cannot be treated as a successful, complete extraction.
                     raise RuntimeError(f"Cannot scan {path.name}: {error}") from error
-                print(f"Scanned {path.name}: {len(self.assets)} assets", flush=True)
+                progress.set_postfix(
+                    assets=len(self.assets), errors=len(self.errors), refresh=False
+                )
         metadata = {
             "assets": self.assets,
             "keys": self.keys,

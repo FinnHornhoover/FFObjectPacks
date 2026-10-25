@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: pip install 'PyYAML>=6,<7' httpx
+      - run: pip install 'PyYAML>=6,<7' httpx tqdm
 
       - name: Check latest InfoPacks release
         id: prepare
@@ -60,4 +60,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          INFO_URL: ${{ steps.prepare.outputs.info_url }}
+          FORMAT_VERSION: ${{ steps.prepare.outputs.format_version }}
+        run: |
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest \
+            --notes "3D assets for [FFInfoPacks $RELEASE_TAG]($INFO_URL).
+
+          Object pack format: $FORMAT_VERSION"

@@ -11,6 +11,8 @@ from typing import Any
 
 import aiofiles
 import httpx
+from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
 
 from ffobjects import FORMAT_VERSION
 from ffobjects.common import load_config, write_json, zip_name
@@ -45,15 +47,21 @@ async def get_json_info(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return response.json()
 
 
-async def download_file(client: httpx.AsyncClient, url: str, path: Path) -> None:
+async def download_file(
+    client: httpx.AsyncClient, url: str, path: Path, progress: tqdm | None = None
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".part")
     try:
         async with client.stream("GET", url, headers=headers(url)) as response:
             response.raise_for_status()
+            if progress is not None:
+                progress.total = int(response.headers.get("Content-Length", 0)) or None
             async with aiofiles.open(temporary, "wb") as output:
                 async for chunk in response.aiter_bytes(chunk_size=1 << 16):
                     await output.write(chunk)
+                    if progress is not None:
+                        progress.update(len(chunk))
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -134,6 +142,11 @@ async def latest_assets(client: httpx.AsyncClient) -> dict[str, str]:
         release = await get_json_info(
             client, f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
         )
+        if (
+            f"Object pack format: {FORMAT_VERSION}"
+            not in (release.get("body") or "").splitlines()
+        ):
+            return {}
         return {
             asset["name"]: asset["browser_download_url"] for asset in release["assets"]
         }
@@ -153,16 +166,23 @@ async def download_build(
 ) -> None:
     archive = artifacts / zip_name(build, entry)
     if reusable_zip(archive, build, entry):
+        tqdm.write(f"{build}: reusing {archive.name}")
         return
     if archive.name in released:
-        await download_file(client, released[archive.name], archive)
+        with tqdm(
+            desc=f"{build}: download archive", unit="B", unit_scale=True, mininterval=2
+        ) as progress:
+            await download_file(client, released[archive.name], archive, progress)
         if reusable_zip(archive, build, entry):
             return
         archive.unlink()
     version, files = await resolve_cache(client, entry)
     directory = assets / build
-    await asyncio.gather(
-        *[download_file(client, url, directory / name) for name, url in files.items()]
+    await tqdm_asyncio.gather(
+        *[download_file(client, url, directory / name) for name, url in files.items()],
+        desc=f"{build}: download cache",
+        unit="file",
+        mininterval=2,
     )
     write_json(directory / ".cache-manifest.json", version)
     write_json(directory / ".cache-files.json", sorted(files))

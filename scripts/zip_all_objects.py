@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import shutil
+import zipfile
 from pathlib import Path
+
+from tqdm import tqdm
 
 from ffobjects.common import load_config, zip_name
 
@@ -14,9 +16,19 @@ def main(config_path: Path, in_root: Path, out_root: Path) -> None:
     for directory in sorted(in_root.iterdir()):
         if directory.is_dir():
             name = zip_name(directory.name, config[directory.name])
-            shutil.make_archive(
-                str(out_root / name.removesuffix(".zip")), "zip", directory
-            )
+            with (
+                zipfile.ZipFile(
+                    out_root / name, "w", compression=zipfile.ZIP_DEFLATED
+                ) as archive,
+                tqdm(
+                    sorted(directory.rglob("*")),
+                    desc=f"{directory.name}: package",
+                    unit="entry",
+                    mininterval=2,
+                ) as progress,
+            ):
+                for path in progress:
+                    archive.write(path, path.relative_to(directory))
             changes.append(f" - Build `{directory.name}` is available at `{name}`.")
     (out_root / "changelog.txt").write_text("\n".join(changes))
 

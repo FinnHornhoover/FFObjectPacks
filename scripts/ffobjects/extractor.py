@@ -11,6 +11,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from tqdm import tqdm
 from unitypack.engine.texture import Texture2D
 
 from . import FORMAT_VERSION
@@ -65,8 +66,18 @@ def export_assets(
                 results[record["object"]] = future.result()
             except Exception as error:
                 errors.append({**record, "error": str(error)})
+            progress.set_postfix(errors=len(errors), refresh=False)
+            progress.update(1)
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with (
+        tqdm(
+            total=len(selection),
+            desc=f"{reader.root.name}: extract",
+            unit="asset",
+            mininterval=2,
+        ) as progress,
+        ThreadPoolExecutor(max_workers=4) as pool,
+    ):
         for filename, records in by_file.items():
             wanted = collections.defaultdict(list)
             for record in records:
@@ -78,15 +89,13 @@ def export_assets(
                         pending[pool.submit(convert, record, value)] = record
                     except Exception as error:
                         errors.append({**record, "error": str(error)})
+                        progress.set_postfix(errors=len(errors), refresh=False)
+                        progress.update(1)
                     if len(pending) >= 16:
                         done, _ = wait(pending, return_when=FIRST_COMPLETED)
                         harvest(done)
                 del asset
             gc.collect()
-            print(
-                f"Exported {filename}: {len(results)} resources, {len(errors)} errors",
-                flush=True,
-            )
         if pending:
             done, _ = wait(pending)
             harvest(done)
@@ -108,7 +117,12 @@ def write_catalogs(planned: dict[str, Any], output: Path) -> None:
     }
     by_category = collections.defaultdict(list)
     seen = set()
-    for entry in planned["catalogs"]:
+    for entry in tqdm(
+        planned["catalogs"],
+        desc=f"{output.name}: index models",
+        unit="entry",
+        mininterval=2,
+    ):
         identity = (entry["path"], entry["object"])
         if identity in seen:
             continue

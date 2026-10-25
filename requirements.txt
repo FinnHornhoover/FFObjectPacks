@@ -1,3 +1,4 @@
+tqdm
 httpx
 aiofiles
 PyYAML>=6,<7

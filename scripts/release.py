@@ -8,6 +8,9 @@ from typing import Any
 
 import httpx
 import yaml
+from tqdm import tqdm
+
+from ffobjects import FORMAT_VERSION
 
 INFO_REPOSITORY = "FinnHornhoover/FFInfoPacks"
 
@@ -39,9 +42,11 @@ def main() -> None:
     if (
         existing
         and not existing["draft"]
+        and f"Object pack format: {FORMAT_VERSION}"
+        in (existing.get("body") or "").splitlines()
         and sorted(asset["name"] for asset in existing["assets"]) == names
     ):
-        print(f"{tag} already matches FFInfoPacks; skipping")
+        tqdm.write(f"{tag} already matches FFInfoPacks; skipping")
         output("skip_release", "true")
         return
 
@@ -64,6 +69,7 @@ def main() -> None:
         (config_root / f"{build}.yml").write_text(
             yaml.safe_dump({"config": {build: entry}}, sort_keys=False)
         )
+    output("format_version", str(FORMAT_VERSION))
     output("release_tag", tag)
     output("release_name", info["name"] or tag)
     output("info_url", info["html_url"])

@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import msgpack
+from tqdm import tqdm
 
 from .common import pack, rawref, refs, write_json
 
@@ -28,8 +29,11 @@ def category(path: str) -> str:
 def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
     nodes = {}
     with (work / "nodes.msgpack").open("rb") as stream:
-        for oid, tid, aid, data in msgpack.Unpacker(
-            stream, raw=False, strict_map_key=False
+        for oid, tid, aid, data in tqdm(
+            msgpack.Unpacker(stream, raw=False, strict_map_key=False),
+            desc=f"{output.name}: read objects",
+            unit="object",
+            mininterval=2,
         ):
             nodes[oid] = (tid, aid, data)
     children = collections.defaultdict(list)
@@ -95,43 +99,49 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
                 }
             )
     seen, missing = set(), set()
-    while todo:
-        oid = todo.pop()
-        if oid is None or oid in seen:
-            continue
-        seen.add(oid)
-        if oid not in nodes:
-            missing.add(oid)
-            continue
-        tid, aid, data = nodes[oid]
-        if tid == 1:
-            has_renderer = any(kind == 23 for kind, pointer in data["components"])
-            todo.extend(
-                pointer
-                for kind, pointer in data["components"]
-                if pointer in nodes and (kind != 33 or has_renderer)
-            )
-        elif tid == 4:
-            todo.extend((data["parent"], data["go"]))
-        elif tid == 33:
-            todo.append(data["mesh"])
-        elif tid in (23, 26, 137):
-            todo.extend(refs(data))
-            go = rawref(data, "m_GameObject")
-            if tid == 23 and go in nodes:
+    with tqdm(
+        desc=f"{output.name}: resolve dependencies", unit="object", mininterval=2
+    ) as progress:
+        while todo:
+            oid = todo.pop()
+            if oid is None or oid in seen:
+                continue
+            seen.add(oid)
+            progress.update(1)
+            if oid not in nodes:
+                missing.add(oid)
+                continue
+            tid, aid, data = nodes[oid]
+            if tid == 1:
+                has_renderer = any(kind == 23 for kind, pointer in data["components"])
                 todo.extend(
                     pointer
-                    for kind, pointer in nodes[go][2]["components"]
-                    if kind == 33
+                    for kind, pointer in data["components"]
+                    if pointer in nodes and (kind != 33 or has_renderer)
                 )
-        elif tid == 154:
-            todo.extend((rawref(data, "m_GameObject"), rawref(data, "m_TerrainData")))
-        elif tid in (21, 104, 108, 156, 157) or tid < 0:
-            dependencies = list(refs(data))
-            todo.extend(dependencies)
-            if tid == 156:
-                for dependency in dependencies:
-                    add_tree(dependency)
+            elif tid == 4:
+                todo.extend((data["parent"], data["go"]))
+            elif tid == 33:
+                todo.append(data["mesh"])
+            elif tid in (23, 26, 137):
+                todo.extend(refs(data))
+                go = rawref(data, "m_GameObject")
+                if tid == 23 and go in nodes:
+                    todo.extend(
+                        pointer
+                        for kind, pointer in nodes[go][2]["components"]
+                        if kind == 33
+                    )
+            elif tid == 154:
+                todo.extend(
+                    (rawref(data, "m_GameObject"), rawref(data, "m_TerrainData"))
+                )
+            elif tid in (21, 104, 108, 156, 157) or tid < 0:
+                dependencies = list(refs(data))
+                todo.extend(dependencies)
+                if tid == 156:
+                    for dependency in dependencies:
+                        add_tree(dependency)
     selected = seen & nodes.keys()
     unresolved = [
         {"object": oid, "source_key": metadata["keys"][oid]} for oid in sorted(missing)
@@ -153,7 +163,12 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
     for oid in selected:
         groups[nodes[oid][1]].append(oid)
     graphs, node_maps, objects, selection = [], [], {}, []
-    for aid, ids in sorted(groups.items()):
+    for aid, ids in tqdm(
+        sorted(groups.items()),
+        desc=f"{output.name}: write scenes",
+        unit="asset",
+        mininterval=2,
+    ):
         transforms = sorted(oid for oid in ids if nodes[oid][0] == 4)
         transform_map = {oid: index for index, oid in enumerate(transforms)}
         names, name_map, binary, renderers, settings, external_parents = (
