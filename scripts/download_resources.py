@@ -208,6 +208,7 @@ async def main(config_path: Path, asset_root: Path, artifact_root: Path) -> None
                 released,
             )
             for build, entry in config.items()
+            if not (build.endswith("-fixed") and build.removesuffix("-fixed") in config)
         ]
         await asyncio.gather(*targets)
 

@@ -59,6 +59,7 @@ def main() -> None:
     current = yaml.safe_load(response.text)["config"]
     config_root = Path("config/builds")
     config_root.mkdir(parents=True, exist_ok=True)
+    builds = {}
     for name in names:
         build, version = name.removesuffix(".zip").split("_r", 1)
         revision, _, nickname = version.partition("_")
@@ -66,8 +67,16 @@ def main() -> None:
         entry.pop("nickname", None)
         if nickname:
             entry["nickname"] = nickname
-        (config_root / f"{build}.yml").write_text(
-            yaml.safe_dump({"config": {build: entry}}, sort_keys=False)
+        builds[build] = entry
+    groups = {}
+    for build, entry in builds.items():
+        source = build.removesuffix("-fixed")
+        if source not in builds:
+            source = build
+        groups.setdefault(source, {})[build] = entry
+    for source, entries in groups.items():
+        (config_root / f"{source}.yml").write_text(
+            yaml.safe_dump({"config": entries}, sort_keys=False)
         )
     output("format_version", str(FORMAT_VERSION))
     output("release_tag", tag)

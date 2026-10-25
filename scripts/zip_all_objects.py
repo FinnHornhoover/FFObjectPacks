@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -30,6 +31,15 @@ def main(config_path: Path, in_root: Path, out_root: Path) -> None:
                 for path in progress:
                     archive.write(path, path.relative_to(directory))
             changes.append(f" - Build `{directory.name}` is available at `{name}`.")
+    for build, entry in config.items():
+        source = build.removesuffix("-fixed")
+        if source != build and source in config:
+            name = zip_name(build, entry)
+            tqdm.write(f"{build}: copying {source} pack")
+            shutil.copyfile(
+                out_root / zip_name(source, config[source]), out_root / name
+            )
+            changes.append(f" - Build `{build}` is available at `{name}`.")
     (out_root / "changelog.txt").write_text("\n".join(changes))
 
 

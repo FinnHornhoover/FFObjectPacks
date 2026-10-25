@@ -39,4 +39,4 @@ Detail MessagePack uses either:
 
 Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Reference decoders are in `scripts/ffobjects/terrain.py`.
 
-ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
+Fixed ZIPs are identical copies of their nonfixed packs; `manifest.json` identifies the source build and revision. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
