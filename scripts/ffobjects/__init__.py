@@ -1,1 +1,1 @@
-FORMAT_VERSION: int = 1
+FORMAT_VERSION: int = 2

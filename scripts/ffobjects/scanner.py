@@ -6,15 +6,37 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import msgpack
 from tqdm import tqdm
 from unitypack.object import ObjectInfo, ObjectPointer
 
+from .animations import describe_clip, rig_type
 from .cache import CacheReader
 from .common import content_file, pack, write_json
 from .terrain import encode_details, encode_heights
 
-VISUAL_TYPES = {1, 4, 21, 23, 26, 27, 28, 33, 43, 48, 89, 104, 108, 137, 154, 156, 157}
-COMPONENT_TYPES = {4, 23, 26, 33, 108, 137, 154}
+VISUAL_TYPES = {
+    1,
+    4,
+    21,
+    23,
+    26,
+    27,
+    28,
+    33,
+    43,
+    48,
+    74,
+    89,
+    104,
+    108,
+    111,
+    137,
+    154,
+    156,
+    157,
+}
+COMPONENT_TYPES = {4, 23, 26, 33, 108, 111, 137, 154}
 
 
 class Scanner:
@@ -28,6 +50,9 @@ class Scanner:
         self.prefabs: list[list[Any]] = []
         self.scenes: list[dict[str, Any]] = []
         self.terrains: list[int] = []
+        self.clips: list[int] = []
+        self.rigs: list[int] = []
+        self.animation_paths: dict[str, int] = {}
         self.counts: collections.Counter[str] = collections.Counter()
 
     def oid(self, asset: str, path_id: int) -> int:
@@ -38,7 +63,8 @@ class Scanner:
         return self.keymap[key]
 
     def pointer(self, pointer: ObjectPointer | None) -> int | None:
-        if not pointer:
+        # Modified bundles can leave a stale file ID on a null object pointer.
+        if pointer is None or pointer.path_id == 0:
             return None
         try:
             name = (
@@ -89,10 +115,21 @@ class Scanner:
         data["m_DetailDatabase"] = details
         return self.convert(data)
 
-    def describe(self, obj: ObjectInfo, scene: bool) -> dict[str, Any]:
+    def describe(self, obj: ObjectInfo) -> dict[str, Any]:
         tid = obj.type_id
         raw = obj.read()
         raw = getattr(raw, "_obj", raw)
+        if tid == 74:
+            data = self.convert(raw)
+            relative = content_file(
+                self.output,
+                "animations/clips",
+                msgpack.packb(data, use_bin_type=True, use_single_float=True),
+                ".msgpack",
+            )
+            return describe_clip(data, relative, self.animation_paths)
+        if tid < 0 and (kind := rig_type(raw)):
+            return {"script_type": kind, **self.convert(raw)}
         if tid == 43:
             return {"name": raw.get("m_Name", "")}
         if tid in (27, 28, 89):
@@ -111,7 +148,7 @@ class Scanner:
                 "components": [
                     [kind, self.pointer(pointer)]
                     for kind, pointer in raw["m_Component"]
-                    if kind in COMPONENT_TYPES or (scene and kind < 0)
+                    if kind in COMPONENT_TYPES or kind < 0
                 ],
             }
         if tid == 4:
@@ -177,7 +214,20 @@ class Scanner:
                                         [source_path, self.pointer(entry["asset"])]
                                     )
                                 continue
-                            if tid not in VISUAL_TYPES:
+                            try:
+                                tree = obj.type_tree if tid < 0 else None
+                            except KeyError:
+                                tree = None
+                            rig = (
+                                rig_type(child.name for child in tree.children)
+                                if tree
+                                else None
+                            )
+                            if tid == 74:
+                                self.clips.append(self.oid(name, obj.path_id))
+                            if rig:
+                                self.rigs.append(self.oid(name, obj.path_id))
+                            if tid not in VISUAL_TYPES and not rig:
                                 if scene and tid < 0:
                                     try:
                                         raw = obj.read()
@@ -193,12 +243,21 @@ class Scanner:
                                 continue
                             oid = self.oid(name, obj.path_id)
                             try:
-                                data = self.describe(obj, scene)
+                                data = self.describe(obj)
                                 stream.write(pack([oid, tid, aid, data]))
                                 self.counts[str(tid)] += 1
                                 if tid == 156:
                                     self.terrains.append(oid)
-                                if scene and tid in (23, 26, 104, 108, 137, 154, 157):
+                                if scene and tid in (
+                                    23,
+                                    26,
+                                    104,
+                                    108,
+                                    111,
+                                    137,
+                                    154,
+                                    157,
+                                ):
                                     scene_roots.append(oid)
                             except Exception as error:
                                 self.errors.append(
@@ -211,6 +270,10 @@ class Scanner:
                                         "error": str(error),
                                     }
                                 )
+                                if tid == 74 or rig:
+                                    raise RuntimeError(
+                                        f"Cannot extract object {obj.path_id} (type {tid}): {error}"
+                                    ) from error
                         if scene_roots:
                             self.scenes.append({"asset": aid, "roots": scene_roots})
                         del asset
@@ -219,13 +282,20 @@ class Scanner:
                     # Bundle failures cannot be treated as a successful, complete extraction.
                     raise RuntimeError(f"Cannot scan {path.name}: {error}") from error
                 progress.set_postfix(
-                    assets=len(self.assets), errors=len(self.errors), refresh=False
+                    assets=len(self.assets),
+                    clips=len(self.clips),
+                    rigs=len(self.rigs),
+                    errors=len(self.errors),
+                    refresh=False,
                 )
         metadata = {
             "assets": self.assets,
             "keys": self.keys,
             "scene_roots": self.scenes,
             "terrain_roots": self.terrains,
+            "clip_roots": self.clips,
+            "rig_roots": self.rigs,
+            "animation_paths": list(self.animation_paths),
             "prefab_roots": self.prefabs,
             "errors": self.errors,
             "counts": dict(self.counts),
@@ -236,7 +306,15 @@ class Scanner:
             {
                 k: v
                 for k, v in metadata.items()
-                if k not in ("keys", "prefab_roots", "scene_roots")
+                if k
+                not in (
+                    "keys",
+                    "prefab_roots",
+                    "scene_roots",
+                    "animation_paths",
+                    "clip_roots",
+                    "rig_roots",
+                )
             },
         )
         return metadata

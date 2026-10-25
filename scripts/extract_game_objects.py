@@ -23,7 +23,7 @@ def main(config_path: Path, asset_root: Path, out_root: Path, work_root: Path) -
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Extract plain GLB, lossless WebP and compact terrain data"
+        description="Extract GLB geometry, lossless WebP, source animations and terrain"
     )
     parser.add_argument("config", type=Path)
     parser.add_argument("assets", type=Path)

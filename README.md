@@ -1,12 +1,13 @@
 # FFObjectPacks
 
-FusionFall models, textures and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks). Outputs use plain GLB, lossless WebP and compact terrain data.
+FusionFall models, textures, animations and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks). Outputs use GLB geometry, lossless WebP, source animation curves and compact terrain data.
 
 ## Contents
 
 | Folder | Contents |
 |---|---|
-| `models/` | Monster, nano, NPC, player, item and prop indexes; shared geometry and rigs |
+| `models/` | Monster, nano, NPC, player, item and prop indexes; shared geometry, skin data and clothing bone maps |
+| `animations/` | Shared source clips, indexes and model bindings |
 | `textures/` | Shared WebP files and original-path index |
 | `areas/` | Scenes, heightfields and grass/detail data |
 | `metadata/` | Materials, references and coverage |

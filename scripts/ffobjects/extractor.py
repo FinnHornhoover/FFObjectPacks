@@ -132,6 +132,7 @@ def write_catalogs(planned: dict[str, Any], output: Path) -> None:
         if oid in node_map:
             graph, node = node_map[oid]
             description.update(graph=planned["graphs"][graph]["file"], root_node=node)
+            description.update(planned["model_bindings"].get(oid, {}))
         elif oid in planned["objects"]:
             description.update(planned["objects"][oid][2])
         else:
@@ -204,11 +205,15 @@ def extract_build(
             "textures": "lossless WebP",
             "terrain": True,
             "skin_source_data": True,
-            "animations": False,
+            "animations": True,
+            "animation_encoding": "Unity legacy source curves",
+            "rig_bindings": True,
         },
         "coordinates": COORDINATES,
         "models": "models/index.json",
         "areas": "areas/index.json",
+        "animations": "animations/index.json",
+        "rigs": "models/rigs.msgpack",
         "materials": "metadata/materials.msgpack",
         "resources": "metadata/resources.msgpack",
         "graphs": "metadata/graphs.json",
@@ -231,7 +236,7 @@ def extract_build(
     (output / "README.md").write_text(
         "# FusionFall Object Pack\n\n"
         "Start with manifest.json and the models/ and areas/ indexes.\n"
-        "Use metadata/ for material bindings and models/skins/ for rigs. Animations are not included yet.\n"
+        "Use animations/ for source clips and bindings, models/rigs.msgpack for clothing maps, and models/skins/ for weights and bind poses.\n"
         "Format: https://github.com/FinnHornhoover/FFObjectPacks/blob/main/FORMAT.md\n"
     )
     return manifest

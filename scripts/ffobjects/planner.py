@@ -8,6 +8,7 @@ from typing import Any
 import msgpack
 from tqdm import tqdm
 
+from .animations import collect_bindings
 from .common import pack, rawref, refs, write_json
 
 
@@ -62,6 +63,8 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
     todo = [oid for scene in usable for oid in scene["roots"]] + metadata[
         "terrain_roots"
     ]
+    todo.extend(metadata["clip_roots"])
+    todo.extend(metadata["rig_roots"])
     expanded, catalogs = set(), []
 
     def add_tree(go: int | None) -> None:
@@ -82,7 +85,7 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
 
     for path, oid in metadata["prefab_roots"]:
         if oid not in nodes:
-            continue  # Audio/animation/script containers are intentionally outside this extraction stage.
+            continue  # Nonvisual bundle exports are not model catalog entries.
         tid = nodes[oid][0]
         if tid == 1:
             add_tree(oid)
@@ -132,6 +135,8 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
                         for kind, pointer in nodes[go][2]["components"]
                         if kind == 33
                     )
+            elif tid == 111:
+                add_tree(rawref(data, "m_GameObject"))
             elif tid == 154:
                 todo.extend(
                     (rawref(data, "m_GameObject"), rawref(data, "m_TerrainData"))
@@ -139,26 +144,14 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
             elif tid in (21, 104, 108, 156, 157) or tid < 0:
                 dependencies = list(refs(data))
                 todo.extend(dependencies)
-                if tid == 156:
+                if tid == 156 or data.get("script_type"):
                     for dependency in dependencies:
                         add_tree(dependency)
     selected = seen & nodes.keys()
     unresolved = [
         {"object": oid, "source_key": metadata["keys"][oid]} for oid in sorted(missing)
     ]
-    unexpected = [
-        entry
-        for entry in unresolved
-        if entry["source_key"][0] != "library/unity default resources"
-    ]
-    if unexpected:
-        write_json(
-            output / "metadata/coverage.json",
-            {"missing": unresolved, "unavailable_scenes": unavailable},
-        )
-        raise ValueError(
-            f"{len(unexpected)} unresolved visual dependencies; see metadata/coverage.json"
-        )
+    animation_data = collect_bindings(nodes, selected, metadata, output)
     groups = collections.defaultdict(list)
     for oid in selected:
         groups[nodes[oid][1]].append(oid)
@@ -245,6 +238,10 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
                         },
                     ]
                 )
+            elif tid == 111:
+                objects[oid] = [tid, aid, {"binding": oid}]
+            elif tid < 0 and data.get("script_type"):
+                objects[oid] = [tid, aid, {"rig": oid}]
             elif tid in (104, 108, 157) or tid < 0:
                 settings.append([oid, tid, data])
             else:
@@ -275,6 +272,14 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
                         "renderers": renderers,
                         "settings": settings,
                         "external_parents": external_parents,
+                        "animations": [
+                            oid
+                            for oid in sorted(ids)
+                            if oid in animation_data["bindings"]
+                        ],
+                        "rigs": [
+                            oid for oid in sorted(ids) if oid in animation_data["rigs"]
+                        ],
                     }
                 )
             )
@@ -300,6 +305,7 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
         "missing": unresolved,
         "unavailable_scenes": unavailable,
         "scan_errors": metadata["errors"],
+        "animations": animation_data["coverage"],
     }
     write_json(output / "metadata/coverage.json", coverage)
     return {
@@ -309,4 +315,5 @@ def plan(metadata: dict[str, Any], work: Path, output: Path) -> dict[str, Any]:
         "catalogs": catalogs,
         "selection": selection,
         "coverage": coverage,
+        "model_bindings": animation_data["model_bindings"],
     }
