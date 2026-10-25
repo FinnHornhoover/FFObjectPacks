@@ -1,0 +1,7 @@
+httpx
+aiofiles
+PyYAML>=6,<7
+numpy>=2.2,<3
+msgpack>=1.1,<2
+Pillow>=11.2,<13
+git+https://github.com/dongresource/UnityPackFF.git@ec9c4524ffc93e0482c500d810dd63cfa110be40

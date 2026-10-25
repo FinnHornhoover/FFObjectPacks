@@ -1,0 +1,61 @@
+name: Create Release with Artifacts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install 'PyYAML>=6,<7' httpx
+
+      - name: Check latest InfoPacks release
+        id: prepare
+        run: python scripts/release.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install extraction dependencies
+        if: steps.prepare.outputs.skip_release != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libmagickwand-dev
+          python -m pip install -r requirements.txt
+
+      - name: Prepare release
+        if: steps.prepare.outputs.skip_release != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+          RELEASE_NAME: ${{ steps.prepare.outputs.release_name }}
+          INFO_URL: ${{ steps.prepare.outputs.info_url }}
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --target "$GITHUB_SHA" --title "$RELEASE_NAME" \
+              --notes "3D assets for [FFInfoPacks $RELEASE_TAG]($INFO_URL)."
+
+      - name: Build and upload archives
+        if: steps.prepare.outputs.skip_release != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+        run: |
+          for config in config/builds/*.yml; do
+            python scripts/download_resources.py "$config" assets artifacts
+            python scripts/extract_game_objects.py "$config" assets output
+            python scripts/zip_all_objects.py "$config" output artifacts
+            gh release upload "$RELEASE_TAG" artifacts/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            rm -rf assets output work artifacts
+          done
+
+      - name: Publish release
+        if: steps.prepare.outputs.skip_release != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
