@@ -90,7 +90,7 @@ async fn prepare(
 
     let archive = job.archive();
     fs::create_dir_all(archive.parent().unwrap())?;
-    let resolved = download::resolve(&client, &job.entry).await?;
+    let resolved = download::resolve(&client, &job.entry, &job.name).await?;
     let cache = job.cache();
     let mut cache_downloaded = false;
     let hashes = if let Some(hashes) = &resolved.hashes {

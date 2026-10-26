@@ -1,4 +1,7 @@
-use crate::{progress::Progress, release::Build};
+use crate::{
+    progress::{Progress, log},
+    release::Build,
+};
 use anyhow::{Context, Result, ensure};
 use futures_util::{StreamExt, TryStreamExt, stream};
 use reqwest::{Client, Url};
@@ -7,6 +10,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    future::Future,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -32,13 +36,79 @@ fn request(client: &Client, url: &str) -> reqwest::RequestBuilder {
     request
 }
 
+const ATTEMPTS: usize = 5;
+
+fn retry_delay(attempt: usize, error: &anyhow::Error) -> Option<Duration> {
+    if attempt >= ATTEMPTS {
+        return None;
+    }
+    let error = error.downcast_ref::<reqwest::Error>()?;
+    let transient = if let Some(status) = error.status() {
+        status.is_server_error() || matches!(status.as_u16(), 408 | 429)
+    } else {
+        error.is_connect()
+            || error.is_timeout()
+            || error.is_body()
+            || error.is_decode()
+            || error.is_request()
+    };
+    transient.then(|| Duration::from_secs(1 << (attempt - 1)))
+}
+
+async fn retry<T, F, Fut>(
+    mut action: F,
+    mut report: impl FnMut(usize, Duration, &anyhow::Error),
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let mut attempt = 1;
+    loop {
+        match action().await {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let Some(delay) = retry_delay(attempt, &error) else {
+                    return Err(error);
+                };
+                report(attempt, delay, &error);
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
+async fn read(client: &Client, url: &str, build: &str, operation: &str) -> Result<Vec<u8>> {
+    retry(
+        || async {
+            Ok(request(client, url)
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await?
+                .to_vec())
+        },
+        |attempt, delay, error| {
+            log(
+                build,
+                operation,
+                format!(
+                    "{url}: attempt {attempt}/{ATTEMPTS} failed; retrying in {}s: {error:#}",
+                    delay.as_secs()
+                ),
+            )
+        },
+    )
+    .await
+    .with_context(|| format!("Request {url}"))
+}
+
 pub async fn json(client: &Client, url: &str) -> Result<Value> {
-    Ok(request(client, url)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?)
+    Ok(serde_json::from_slice(
+        &read(client, url, "release", "release/sources").await?,
+    )?)
 }
 
 fn safe_name(name: &str) -> Result<()> {
@@ -61,15 +131,24 @@ pub struct Source {
     pub hashes: Option<BTreeMap<String, String>>,
 }
 
-pub async fn resolve(client: &Client, entry: &Build) -> Result<Source> {
+pub async fn resolve(client: &Client, entry: &Build, build: &str) -> Result<Source> {
     let (version, base) = if let Some(api) = &entry.api_url {
         let api = api.trim_end_matches('/');
-        let info = json(client, api).await?;
+        let info: Value =
+            serde_json::from_slice(&read(client, api, build, "prepare/source").await?)?;
         let id = info["game_versions"][0]
             .as_str()
             .context("Launcher API has no game versions")?;
 
-        let version = json(client, &format!("{api}/versions/{id}.json")).await?;
+        let version: Value = serde_json::from_slice(
+            &read(
+                client,
+                &format!("{api}/versions/{id}.json"),
+                build,
+                "prepare/source",
+            )
+            .await?,
+        )?;
         let base = version["asset_url"]
             .as_str()
             .context("Manifest has no asset_url")?
@@ -82,12 +161,8 @@ pub async fn resolve(client: &Client, entry: &Build) -> Result<Source> {
             .context("Build has neither url nor api-url")?
             .trim_end_matches('/')
             .to_owned();
-        let text = request(client, &format!("{base}/"))
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let text =
+            String::from_utf8(read(client, &format!("{base}/"), build, "prepare/source").await?)?;
 
         let names = {
             let html = Html::parse_document(&text);
@@ -174,7 +249,7 @@ struct Transfer {
     bytes: u64,
 }
 
-async fn transfer(
+async fn transfer_once(
     client: &Client,
     url: &str,
     path: &Path,
@@ -186,6 +261,7 @@ async fn transfer(
         path.file_name().unwrap().to_string_lossy()
     ));
 
+    let mut received = 0;
     let result = async {
         let response = request(client, url).send().await?.error_for_status()?;
         let mut chunks = response.bytes_stream();
@@ -198,6 +274,7 @@ async fn transfer(
             digest.update(&chunk);
 
             let mut status = progress.lock().unwrap();
+            received += chunk.len() as u64;
             status.bytes += chunk.len() as u64;
             let done = status.done;
             let bytes = status.bytes;
@@ -217,9 +294,29 @@ async fn transfer(
 
     if result.is_err() {
         let _ = tokio::fs::remove_file(&temporary).await;
+        progress.lock().unwrap().bytes -= received;
     }
 
     result.with_context(|| format!("Download {url}"))
+}
+
+async fn transfer(
+    client: &Client,
+    url: &str,
+    path: &Path,
+    progress: &Arc<Mutex<Transfer>>,
+) -> Result<String> {
+    retry(
+        || transfer_once(client, url, path, progress),
+        |attempt, delay, error| {
+            progress.lock().unwrap().progress.message(format!(
+                "{}: attempt {attempt}/{ATTEMPTS} failed; retrying in {}s: {error:#}",
+                path.file_name().unwrap().to_string_lossy(),
+                delay.as_secs()
+            ))
+        },
+    )
+    .await
 }
 
 pub async fn file(client: &Client, url: &str, path: &Path) -> Result<()> {

@@ -57,6 +57,10 @@ impl Progress {
         }
     }
 
+    pub fn message(&self, message: impl Display) {
+        log(&self.build, self.operation, message);
+    }
+
     pub fn finish(&self) {
         log(
             &self.build,
