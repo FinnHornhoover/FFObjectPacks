@@ -89,6 +89,7 @@ impl Cache {
             .map(|members| {
                 members
                     .into_iter()
+                    .filter(|member| !member.name.to_ascii_lowercase().ends_with(".dll"))
                     .map(|member| {
                         let name = member.name.clone();
                         Asset::read(member).with_context(|| format!("{} / {name}", path.display()))

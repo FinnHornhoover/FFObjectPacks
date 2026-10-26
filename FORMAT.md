@@ -1,4 +1,4 @@
-# Pack Format 2
+# Pack Format 3
 
 Read `manifest.json` for file paths and coordinate conventions. Paths are relative to the pack root. Metadata uses MessagePack; navigation indexes use JSON.
 
@@ -39,7 +39,7 @@ Detail MessagePack uses either:
 
 Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Terrain encoding is implemented in `src/terrain.rs`.
 
-Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP payload reuse checks build, source fingerprint and `FORMAT_VERSION`; revision and nickname are updated for the new release. Bump the format version when adding animation payloads or changing layouts.
+Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP payload reuse checks build, source fingerprint and `FORMAT_VERSION`; revision and nickname are updated for the new release. Bump the format version when changing layouts or exported data.
 
 ## Animations
 
@@ -60,6 +60,22 @@ Model descriptors add `animations` (binding IDs within their hierarchy) and `rig
 Coverage adds `animations`: clip/binding/rig counts, unbound clip IDs, missing clip references and unresolved/ambiguous target paths. Unbound means no exported Animation component references the clip; runtime code may still use it. Path issues are preserved as coverage, without renaming tracks or dropping their payloads. `missing` retains dangling source material/texture/shader references; available assets are still exported. Source references are not guessed from unrelated object IDs. CDN text placeholders are skipped and recorded as `non-bundle` entries in `scan_errors`.
 
 These are source curves for a wiki compiler, not animations embedded in the geometry GLBs. Packed rotation times are cumulative integer deltas in hundredths of a second. Preserve their packed slopes; exact Unity interpolation and runtime layers/events are separate playback concerns. Apply the hierarchy coordinate conversion to animation values and tangents when compiling.
+
+## Appearances
+
+`manifest.appearances` points to an index containing `hnpcs`, `palettes` and `runtime` paths under `models/appearances/`.
+
+- `hnpcs.msgpack`: table object ID to `{name, asset, source_paths, rows, dependencies}`. Rows preserve the complete source `HNpcTableElement` array, including row 0 and unused entries. Join InfoPacks' NPC `m_iHNpcNum` to the row index when `m_iHNpc` is nonzero. Each dependency path maps to all matching pack object IDs; empty/multiple matches remain explicit. Both gender actors, skin textures and named garments/attachments are included in dependency selection. Source `iType` is female when even, male when odd; negative colour indexes retain actor defaults.
+- `palettes.msgpack`: BSD object ID to `{name, asset, source_paths, skin, hair, eye}`. Serialized skin/hair colours retain source RGBA objects and float precision. `eye` is null when no serialized eye palette exists. Preserve array order: HNPC colour indexes are zero-based, while player-style indexes are generally one-based.
+- `runtime.msgpack`: records with `assembly`, source `bundle`, assembly `sha256`, `method_offset`, `field` and `values`. The reader statically recognizes literal colour arrays (`skinColor`, `hairColor`, `eyeColor`), `uniqueEyes`, eye texture suffix strings (`szTextureSuffix`) and legacy GUI `eyeSwatches`. Runtime colours use RGBA float arrays. Eye swatches explicitly declare zero-based UI selection and one-based player-style indexes. They describe selector colours; rendered eyes still use face texture variants. Runtime and BSD palettes are separate: Retrobution can override the serialized colours. Unsupported recognized array initializers have `supported=false` and null values; no client code executes.
+
+Resources for appearance objects contain `{"appearance": id}`. Their source identity resolves through `metadata/sources.msgpack`. Coverage adds table/palette counts, missing/ambiguous paths, invalid colour indexes, runtime parsing issues and actor rig/height/shape clip availability. Duplicate candidates are preserved for the wiki compiler to resolve. Missing-path records include source placeholders such as `"0"`; paths are not guessed or repaired.
+
+## Shaders
+
+Resource-table class 48 descriptors contain `name`, `declared_name`, `path`, `source`, `default_properties`, `static_properties` and `declarations`. Blank serialized names are recovered from the Shader declaration. `source` points to content-shared legacy ShaderLab text in `models/shaders/`; it can include compiled platform programs and is not a browser shader.
+
+Each declaration records `scope` (`[block kind, ordinal]` pairs), `command`, tokenized `arguments` and source `line`. Tags and blend/cull/depth/alpha/colour state remain scoped to their original category/subshader/pass; apply inheritance and platform selection in the compiler. Quoted program strings and comments do not become render-state directives. Shader defaults retain their texture references, which participate in dependency selection. Coverage reports unnamed shaders and missing source text.
 
 ## Clothing Rigs
 

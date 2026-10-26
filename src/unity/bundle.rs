@@ -54,13 +54,11 @@ pub fn read(path: &Path) -> Result<Option<Vec<Member>>> {
         {
             bail!("Invalid bundle member {name}");
         }
-        if !name.to_ascii_lowercase().ends_with(".dll") {
-            members.push(Member {
-                name,
-                data: payload[offset..offset + size].to_vec(),
-                version: version.clone(),
-            });
-        }
+        members.push(Member {
+            name,
+            data: payload[offset..offset + size].to_vec(),
+            version: version.clone(),
+        });
     }
 
     Ok(Some(members))

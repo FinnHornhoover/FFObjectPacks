@@ -1,8 +1,12 @@
 use crate::{
+    appearance,
     cache::Cache,
     progress::Progress,
-    terrain,
-    unity::asset::{Asset, Object},
+    runtime, shader, terrain,
+    unity::{
+        asset::{Asset, Object},
+        bundle,
+    },
     value::{Fields, array, content, map, packed, serial, write_json, write_pack},
 };
 use anyhow::{Context, Result};
@@ -41,6 +45,9 @@ pub struct Scan {
     pub terrains: Vec<u32>,
     pub clips: Vec<u32>,
     pub rigs: Vec<u32>,
+    pub appearances: Vec<u32>,
+    pub runtime_palettes: Vec<Value>,
+    pub runtime_errors: Vec<Value>,
     pub prefabs: Vec<(String, Option<u32>)>,
     pub paths: IndexMap<String, u32>,
     pub errors: Vec<Value>,
@@ -60,6 +67,9 @@ impl Scan {
             terrains: Vec::new(),
             clips: Vec::new(),
             rigs: Vec::new(),
+            appearances: Vec::new(),
+            runtime_palettes: Vec::new(),
+            runtime_errors: Vec::new(),
             prefabs: Vec::new(),
             paths: IndexMap::new(),
             errors: Vec::new(),
@@ -207,7 +217,11 @@ impl Scan {
         }
 
         Ok(match tid {
-            43 | 48 => map([("name", default(&raw, "m_Name", "".into()))]),
+            43 => map([("name", default(&raw, "m_Name", "".into()))]),
+            48 => {
+                self.convert(asset, &mut raw);
+                shader::describe(&raw, output)?
+            }
             27 | 28 | 89 => {
                 self.convert(asset, &mut raw);
                 map([
@@ -296,7 +310,7 @@ impl Scan {
                 .strip_prefix(&cache.root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let Some(assets) = cache.assets(path)? else {
+            let Some(members) = bundle::read(path)? else {
                 result.errors.push(map([
                     ("kind", "non-bundle".into()),
                     ("file", source.into()),
@@ -304,7 +318,22 @@ impl Scan {
                 continue;
             };
 
-            for asset in assets {
+            for member in members {
+                if member.name.to_ascii_lowercase().ends_with(".dll") {
+                    let normalized = member.name.to_ascii_lowercase().replace([' ', '-'], "");
+                    if normalized.ends_with("assemblycsharp.dll") {
+                        match runtime::palettes(&member.data, &member.name, &source) {
+                            Ok(data) => result.runtime_palettes.extend(data),
+                            Err(error) => result.runtime_errors.push(map([
+                                ("file", source.clone().into()),
+                                ("assembly", member.name.into()),
+                                ("error", error.to_string().into()),
+                            ])),
+                        }
+                    }
+                    continue;
+                }
+                let asset = Asset::read(member).with_context(|| format!("Cannot read {source}"))?;
                 let name = asset.name.to_ascii_lowercase();
                 let scene = name.starts_with("buildplayer-") && !name.ends_with(".sharedassets");
                 let aid = result.assets.len();
@@ -353,7 +382,10 @@ impl Scan {
                         None
                     };
 
-                    let supported = visual(tid) || rig.is_some();
+                    let appearance = (tid < 0)
+                        .then(|| schema.and_then(appearance::classify))
+                        .flatten();
+                    let supported = visual(tid) || rig.is_some() || appearance.is_some();
                     if !supported && tid != 142 && !(scene && tid < 0) {
                         continue;
                     }
@@ -372,6 +404,9 @@ impl Scan {
                     if supported {
                         id = Some(result.oid(&name, obj.path));
                     }
+                    if appearance.is_some() {
+                        result.appearances.push(id.unwrap());
+                    }
 
                     let fields = match tid {
                         43 => Some(HashSet::from(["m_Name"])),
@@ -386,7 +421,11 @@ impl Scan {
                     };
 
                     let decoded = (|| -> Result<Option<Value>> {
-                        let raw = asset.decode(obj, &cache.fallback, fields.as_ref())?;
+                        let mut raw = asset.decode(obj, &cache.fallback, fields.as_ref())?;
+                        if let Some(kind) = appearance {
+                            raw = raw.without(&["m_GameObject", "m_Script", "m_ExtensionPtr"]);
+                            raw.set("appearance_type", kind.into());
+                        }
                         if tid == 142 {
                             for entry in raw["m_Container"].array() {
                                 let target = result.ptr(&asset, &entry[1]["asset"]).id();
@@ -441,7 +480,7 @@ impl Scan {
                             let _ = error;
                         }
                         Err(error) => {
-                            if tid == 142 || tid == 74 || rig.is_some() {
+                            if tid == 142 || tid == 74 || rig.is_some() || appearance.is_some() {
                                 return Err(error).with_context(|| {
                                     format!(
                                         "Cannot extract {source} / {} / {} (type {tid})",
@@ -507,6 +546,9 @@ impl Scan {
             ("terrain_roots", array(self.terrains.iter().copied())),
             ("clip_roots", array(self.clips.iter().copied())),
             ("rig_roots", array(self.rigs.iter().copied())),
+            ("appearance_roots", array(self.appearances.iter().copied())),
+            ("runtime_palettes", array(self.runtime_palettes.clone())),
+            ("runtime_errors", array(self.runtime_errors.clone())),
             ("animation_paths", array(self.paths.keys().cloned())),
             (
                 "prefab_roots",

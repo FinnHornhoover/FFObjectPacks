@@ -8,6 +8,7 @@ description = "FusionFall offline cache to wiki object packs"
 
 [dependencies]
 anyhow = "1"
+dnfile = "0.5.1"
 image = { version = "0.25", default-features = false }
 texture2ddecoder = "0.1"
 clap = { version = "4", features = ["derive"] }

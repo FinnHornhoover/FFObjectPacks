@@ -4,7 +4,7 @@ FusionFall models, textures, animations and terrain for wiki previews, shipped s
 
 | Folder | Contents |
 |---|---|
-| `models/` | Entity indexes, GLB geometry, hierarchies, skin weights and clothing rigs |
+| `models/` | Entity indexes, GLB geometry, hierarchies, clothing rigs, appearances, palettes and shaders |
 | `animations/` | Source curves, clip indexes and model bindings |
 | `textures/` | Lossless WebP images and original-path index |
 | `areas/` | Scenes, compact heightfields and detail data |

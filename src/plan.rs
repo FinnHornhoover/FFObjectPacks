@@ -1,5 +1,5 @@
 use crate::{
-    animation,
+    animation, appearance,
     progress::Progress,
     scan::{Node, Scan},
     value::{Fields, array, map, rawref, refs, serial, write, write_json, write_pack},
@@ -138,7 +138,12 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
     todo.extend(&scan.terrains);
     todo.extend(&scan.clips);
     todo.extend(&scan.rigs);
+    todo.extend(&scan.appearances);
     let (mut expanded, mut catalogs) = (HashSet::new(), Vec::new());
+    for id in appearance::dependencies(scan) {
+        todo.push(id);
+        add_tree(scan, &children, &mut expanded, &mut todo, Some(id));
+    }
     for (path, id) in &scan.prefabs {
         let Some(id) = id else {
             continue;
@@ -226,7 +231,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                 todo.extend(rawref(data, "m_GameObject"));
                 todo.extend(rawref(data, "m_TerrainData"));
             }
-            21 | 104 | 108 | 156 | 157 => {
+            21 | 48 | 104 | 108 | 156 | 157 => {
                 let mut dependencies = Vec::new();
                 refs(data, &mut dependencies);
                 todo.extend(&dependencies);
@@ -366,6 +371,16 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                         },
                     );
                 }
+                tid if tid < 0 && !data["appearance_type"].is_nil() => {
+                    objects.insert(
+                        *id,
+                        Node {
+                            kind: tid,
+                            asset: aid,
+                            data: map([("appearance", (*id).into())]),
+                        },
+                    );
+                }
                 tid if tid < 0 && !data["script_type"].is_nil() => {
                     objects.insert(
                         *id,
@@ -454,6 +469,33 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
     }
     write(&output.join("metadata/node-map.bin"), &binary)?;
 
+    let appearance_coverage = appearance::export(scan, &bindings, output)?;
+    let shader_coverage = map([
+        (
+            "total",
+            objects
+                .values()
+                .filter(|node| node.kind == 48)
+                .count()
+                .into(),
+        ),
+        (
+            "unnamed",
+            objects
+                .values()
+                .filter(|node| node.kind == 48 && node.data["name"].text().is_empty())
+                .count()
+                .into(),
+        ),
+        (
+            "without_source",
+            objects
+                .values()
+                .filter(|node| node.kind == 48 && node.data["source"].is_nil())
+                .count()
+                .into(),
+        ),
+    ]);
     let coverage = map([
         (
             "scenes",
@@ -479,6 +521,8 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
         ("unavailable_scenes", array(unavailable)),
         ("scan_errors", array(scan.errors.clone())),
         ("animations", bindings.coverage),
+        ("appearances", appearance_coverage),
+        ("shaders", shader_coverage),
     ]);
     write_json(&output.join("metadata/coverage.json"), &coverage)?;
 

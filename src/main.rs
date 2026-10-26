@@ -1,4 +1,5 @@
 mod animation;
+mod appearance;
 mod archive;
 mod cache;
 mod convert;
@@ -9,7 +10,9 @@ mod pipeline;
 mod plan;
 mod progress;
 mod release;
+mod runtime;
 mod scan;
+mod shader;
 mod source;
 mod terrain;
 mod texture;
@@ -20,7 +23,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 #[derive(Parser)]
 #[command(version, about)]
