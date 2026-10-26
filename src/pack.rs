@@ -22,13 +22,35 @@ pub fn extract(
     store: &Store,
     work: Option<&Path>,
 ) -> Result<()> {
+    let prepared = prepare(cache, output, work)?;
+    finish(build, revision, nickname, prepared, output, store)
+}
+
+pub struct Prepared {
+    cache: Cache,
+    scan: Scan,
+}
+
+pub fn prepare(cache: &Path, output: &Path, work: Option<&Path>) -> Result<Prepared> {
     if output.exists() {
         fs::remove_dir_all(output)?;
     }
     fs::create_dir_all(output)?;
 
     let cache = Cache::open(cache)?;
-    let mut scan = Scan::run(&cache, output, work)?;
+    let scan = Scan::run(&cache, output, work)?;
+    Ok(Prepared { cache, scan })
+}
+
+pub fn finish(
+    build: &str,
+    revision: u32,
+    nickname: Option<&str>,
+    prepared: Prepared,
+    output: &Path,
+    store: &Store,
+) -> Result<()> {
+    let Prepared { cache, mut scan } = prepared;
     let mut planned = plan::build(&scan, output)?;
     drop(std::mem::take(&mut scan.nodes));
 

@@ -194,7 +194,7 @@ async fn transfer(
 
 pub async fn file(client: &Client, url: &str, path: &Path) -> Result<()> {
     let progress = Arc::new(Mutex::new(Transfer {
-        progress: Progress::new("download archive", 1),
+        progress: Progress::for_path(path.parent().unwrap(), "prepare/archive", 1, "files"),
         done: 0,
         bytes: 0,
     }));
@@ -207,16 +207,20 @@ pub async fn file(client: &Client, url: &str, path: &Path) -> Result<()> {
 pub async fn cache(client: &Client, entry: &Build, root: &Path) -> Result<()> {
     let (version, files) = resolve(client, entry).await?;
     let progress = Arc::new(Mutex::new(Transfer {
-        progress: Progress::new("download cache", files.len()),
+        progress: Progress::for_path(root, "prepare/download", files.len(), "files"),
         done: 0,
         bytes: 0,
     }));
 
-    stream::iter(files.iter())
-        .map(|(name, url)| {
+    let targets: Vec<_> = files
+        .iter()
+        .map(|(name, url)| (root.join(name), url.clone()))
+        .collect();
+    stream::iter(targets)
+        .map(|(path, url)| {
             let progress = progress.clone();
-            let path = root.join(name);
-            async move { transfer(client, url, &path, &progress).await }
+            let client = client.clone();
+            async move { transfer(&client, &url, &path, &progress).await }
         })
         .buffer_unordered(5)
         .try_collect::<Vec<_>>()

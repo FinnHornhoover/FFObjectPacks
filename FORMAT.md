@@ -39,7 +39,7 @@ Detail MessagePack uses either:
 
 Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Terrain encoding is implemented in `src/terrain.rs`.
 
-Fixed ZIPs are identical copies of their nonfixed packs; `manifest.json` identifies the source build and revision. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
+Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
 
 ## Animations
 

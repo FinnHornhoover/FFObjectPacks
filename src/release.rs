@@ -1,8 +1,14 @@
-use crate::{archive, convert::Store, download, pack};
+use crate::{
+    convert::Store,
+    download,
+    pipeline::{Job, Preparation},
+    progress::log,
+};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, fs, path::Path, process::Command, time::Instant};
+use std::{collections::BTreeMap, fs, path::Path, process::Command, sync::Arc};
+use tokio::sync::Semaphore;
 
 const INFO_REPOSITORY: &str = "FinnHornhoover/FFInfoPacks";
 
@@ -88,17 +94,45 @@ fn matches(release: &Value, names: &BTreeMap<String, String>) -> bool {
             .unwrap_or("")
             .lines()
             .any(|line| line == format!("Object pack format: {}", crate::FORMAT_VERSION))
-        && assets(release).keys().eq(names.keys())
+        && assets(release)
+            .keys()
+            .filter(|name| !fixed_zip(name))
+            .eq(names.keys())
 }
 
-fn remove(path: &Path) -> Result<()> {
-    if path.exists() {
-        fs::remove_dir_all(path)?;
+fn fixed_zip(name: &str) -> bool {
+    name.strip_suffix(".zip")
+        .and_then(|stem| stem.split_once("_r"))
+        .is_some_and(|(build, _)| build.ends_with("-fixed"))
+}
+
+fn remove_fixed(repository: &str, tag: &str, release: &Value) -> Result<()> {
+    for name in assets(release).keys().filter(|name| fixed_zip(name)) {
+        log(
+            tag,
+            "release/cleanup",
+            format!("removing fixed archive {name}"),
+        );
+        gh(&[
+            "release",
+            "delete-asset",
+            tag,
+            name,
+            "--repo",
+            repository,
+            "--yes",
+        ])?;
     }
     Ok(())
 }
 
 pub async fn run() -> Result<()> {
+    log(
+        "release",
+        "discover",
+        "reading the latest FFInfoPacks release",
+    );
+
     let repository = std::env::var("GITHUB_REPOSITORY").context("GITHUB_REPOSITORY is required")?;
     let info = api(&format!("repos/{INFO_REPOSITORY}/releases/latest"), false)?.unwrap();
     let tag = info["tag_name"]
@@ -106,19 +140,25 @@ pub async fn run() -> Result<()> {
         .context("InfoPacks release has no tag")?;
     let names: BTreeMap<_, _> = assets(&info)
         .into_iter()
-        .filter(|(name, _)| name.ends_with(".zip"))
+        .filter(|(name, _)| name.ends_with(".zip") && !fixed_zip(name))
         .collect();
 
-    ensure!(!names.is_empty(), "FFInfoPacks {tag} has no build ZIPs");
+    ensure!(
+        !names.is_empty(),
+        "FFInfoPacks {tag} has no nonfixed build ZIPs"
+    );
 
     let existing = api(&format!("repos/{repository}/releases/tags/{tag}"), true)?;
-    if existing
-        .as_ref()
-        .is_some_and(|release| matches(release, &names))
-    {
-        eprintln!(
-            "{tag} already matches FFInfoPacks and format {}; skipping",
-            crate::FORMAT_VERSION
+    if let Some(release) = existing.as_ref().filter(|release| matches(release, &names)) {
+        remove_fixed(&repository, tag, release)?;
+
+        log(
+            tag,
+            "release",
+            format!(
+                "already matches FFInfoPacks and format {}; skipping builds",
+                crate::FORMAT_VERSION
+            ),
         );
         return Ok(());
     }
@@ -150,20 +190,8 @@ pub async fn run() -> Result<()> {
         builds.insert(build.to_owned(), entry);
     }
 
-    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for build in builds.keys() {
-        let source = build
-            .strip_suffix("-fixed")
-            .filter(|source| builds.contains_key(*source))
-            .unwrap_or(build);
-        groups
-            .entry(source.to_owned())
-            .or_default()
-            .push(build.clone());
-    }
-
     let notes = format!(
-        "3D assets for [FFInfoPacks {tag}]({}).\n\nObject pack format: {}",
+        "3D assets for [FFInfoPacks {tag}]({}).\n\nObject pack format: {}\n\nFixed InfoPacks builds use the corresponding nonfixed object pack.",
         info["html_url"].as_str().unwrap_or(""),
         crate::FORMAT_VERSION
     );
@@ -198,68 +226,80 @@ pub async fn run() -> Result<()> {
         })
         .map(|r| assets(&r))
         .unwrap_or_default();
-    let store = Store::new(Path::new("conversions"))?;
+    log(
+        tag,
+        "release",
+        format!(
+            "{} nonfixed builds; preparing at most one ahead",
+            builds.len()
+        ),
+    );
 
-    for (source, variants) in groups {
-        let started = Instant::now();
-        eprintln!("{source}: starting");
-
-        let entry = &builds[&source];
-        let cache = Path::new("assets").join(&source);
-        let output = Path::new("output").join(&source);
-        let artifacts = Path::new("artifacts").join(&source);
-        fs::create_dir_all(&artifacts)?;
-        let archive = artifacts.join(entry.zip_name(&source));
-
-        if !archive::reusable(&archive, &source, entry) {
-            if let Some(url) = released.get(&entry.zip_name(&source)) {
-                download::file(&client, url, &archive).await?;
-            }
-
-            if !archive::reusable(&archive, &source, entry) {
-                download::cache(&client, entry, &cache).await?;
-                pack::extract(
-                    &source,
-                    entry.revision,
-                    entry.nickname.as_deref(),
-                    &cache,
-                    &output,
-                    &store,
-                    None,
-                )?;
-
-                remove(&cache)?;
-                archive::create(&output, &archive)?;
-                remove(&output)?;
-            }
+    let store = Arc::new(Store::new(Path::new("conversions"))?);
+    let scanner = Arc::new(Semaphore::new(1));
+    let workers = rayon::current_num_threads();
+    let overlap_pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers.saturating_sub(1).max(1))
+            .build()?,
+    );
+    let mut jobs = builds.into_iter().map(|(name, entry)| {
+        let released = released.get(&entry.zip_name(&name)).cloned();
+        Job {
+            name,
+            entry,
+            released,
         }
+    });
+    let mut pending = jobs
+        .next()
+        .map(|job| Preparation::start(job, client.clone(), scanner.clone()));
 
-        let mut archives = vec![archive.clone()];
-        for variant in variants.iter().filter(|v| *v != &source) {
-            let copy = artifacts.join(builds[variant].zip_name(variant));
-            fs::copy(&archive, &copy)?;
-            archives.push(copy);
-            eprintln!("{variant}: copied {source} pack");
-        }
+    while let Some(mut current) = pending.take() {
+        current.wait_download().await?;
+        pending = jobs
+            .next()
+            .map(|job| Preparation::start(job, client.clone(), scanner.clone()));
 
-        let mut args = vec![
-            "release".to_owned(),
-            "upload".into(),
-            tag.into(),
-            "--repo".into(),
-            repository.clone(),
-            "--clobber".into(),
-        ];
-        args.extend(archives.iter().map(|p| p.to_string_lossy().into_owned()));
-        gh(&args.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let prepared = current.finish().await?;
+        let pool = pending.as_ref().map(|_| overlap_pool.clone());
+        let completed = prepared.finish(store.clone(), pool).await?;
 
-        remove(&artifacts)?;
-        eprintln!(
-            "{source}: completed in {:.1}s",
-            started.elapsed().as_secs_f64()
+        log(
+            &completed.name,
+            "upload",
+            format!(
+                "started; {}",
+                completed.archive.file_name().unwrap().to_string_lossy()
+            ),
+        );
+        gh(&[
+            "release",
+            "upload",
+            tag,
+            "--repo",
+            &repository,
+            "--clobber",
+            &completed.archive.to_string_lossy(),
+        ])
+        .with_context(|| format!("[{}] [upload] failed", completed.name))?;
+        log(&completed.name, "upload", "complete");
+        fs::remove_dir_all(completed.archive.parent().unwrap())?;
+        log(
+            &completed.name,
+            "build",
+            format!(
+                "complete; {:.1}s including preparation and queue time",
+                completed.started.elapsed().as_secs_f64()
+            ),
         );
     }
 
+    if let Some(existing) = existing {
+        remove_fixed(&repository, tag, &existing)?;
+    }
+
+    log(tag, "release", "publishing");
     gh(&[
         "release",
         "edit",
@@ -271,5 +311,6 @@ pub async fn run() -> Result<()> {
         "--notes",
         &notes,
     ])?;
+    log(tag, "release", "published");
     Ok(())
 }

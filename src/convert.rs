@@ -259,7 +259,12 @@ pub fn export(
 
     let done = AtomicUsize::new(0);
     let hits = AtomicUsize::new(0);
-    let progress = Mutex::new(Progress::new("convert assets", selection.len()));
+    let progress = Mutex::new(Progress::for_path(
+        output,
+        "finish/convert",
+        selection.len(),
+        "assets",
+    ));
     let fields = HashSet::from_iter(GEOMETRY_FIELDS.iter().copied());
 
     let results: Result<Vec<_>> = groups

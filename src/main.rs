@@ -5,6 +5,7 @@ mod convert;
 mod download;
 mod geometry;
 mod pack;
+mod pipeline;
 mod plan;
 mod progress;
 mod release;

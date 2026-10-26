@@ -47,7 +47,7 @@ pub fn create(root: &Path, path: &Path) -> Result<()> {
         .compression_level(Some(6))
         .unix_permissions(0o644);
 
-    let mut progress = Progress::new("package", entries.len());
+    let mut progress = Progress::for_path(root, "finish/package", entries.len(), "files");
     let mut buffer = vec![0; 128 * 1024];
     for (index, entry) in entries.iter().enumerate() {
         archive.start_file(

@@ -280,7 +280,8 @@ impl Scan {
 
     pub fn run(cache: &Cache, output: &Path, work: Option<&Path>) -> Result<Self> {
         let mut result = Self::new();
-        let mut progress = Progress::new("scan", cache.files.len());
+        let mut progress =
+            Progress::for_path(&cache.root, "prepare/scan", cache.files.len(), "files");
         for (index, path) in cache.files.iter().enumerate() {
             let filename = path
                 .file_name()

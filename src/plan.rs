@@ -91,7 +91,7 @@ fn add_tree(
 }
 
 pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
-    let mut progress = Progress::new("resolve dependencies", scan.nodes.len());
+    let mut progress = Progress::for_path(output, "finish/resolve", scan.nodes.len(), "objects");
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     for (id, node) in scan
         .nodes
@@ -269,7 +269,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
 
     let (mut graphs, mut node_maps, mut objects, mut selection) =
         (Vec::new(), BTreeSet::new(), BTreeMap::new(), Vec::new());
-    let mut progress = Progress::new("write scenes", groups.len());
+    let mut progress = Progress::for_path(output, "finish/scenes", groups.len(), "assets");
     for (aid, ids) in groups {
         let transforms: Vec<_> = ids
             .iter()
