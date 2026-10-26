@@ -18,6 +18,8 @@ FFInfoPacks publishes first, then triggers this repo. Run **Create Release with 
 
 One build finishes, packages and uploads while the next downloads and scans, then waits. Only one build is prepared ahead and only one scans at a time. Downloads use five connections; conversion reserves one CPU during overlap and uses up to four threads otherwise. Shared conversions are reused within the run. Every ZIP is self-contained. Log lines use `[elapsed] [build] [prepare/scan]` or `[elapsed] [build] [finish/convert]`; waiting, uploads and total build completion are logged separately.
 
+Releases include `sources.json` with per-build file hashes and fingerprints. Unchanged sources and format reuse the previous ZIP's compressed payloads, updating revision metadata. Published hashes avoid cache downloads; other sources are hashed during download. Older releases without fingerprints need one baseline extraction.
+
 Fixed InfoPacks builds use the corresponding nonfixed object pack; no fixed ZIPs are published. Rerunning a release removes its old fixed ZIPs once the nonfixed packs are available.
 
 ## Development

@@ -4,6 +4,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -31,7 +32,7 @@ fn request(client: &Client, url: &str) -> reqwest::RequestBuilder {
     request
 }
 
-async fn json(client: &Client, url: &str) -> Result<Value> {
+pub async fn json(client: &Client, url: &str) -> Result<Value> {
     Ok(request(client, url)
         .send()
         .await?
@@ -54,7 +55,13 @@ fn safe_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn resolve(client: &Client, entry: &Build) -> Result<(Value, BTreeMap<String, String>)> {
+pub struct Source {
+    pub manifest: Value,
+    pub files: BTreeMap<String, String>,
+    pub hashes: Option<BTreeMap<String, String>>,
+}
+
+pub async fn resolve(client: &Client, entry: &Build) -> Result<Source> {
     let (version, base) = if let Some(api) = &entry.api_url {
         let api = api.trim_end_matches('/');
         let info = json(client, api).await?;
@@ -116,7 +123,7 @@ async fn resolve(client: &Client, entry: &Build) -> Result<(Value, BTreeMap<Stri
         files.insert(name.to_owned(), format!("{base}/{name}"));
     }
 
-    if let Some(main) = version["main_file_url"].as_str() {
+    let main_name = if let Some(main) = version["main_file_url"].as_str() {
         let url = Url::parse(main)?;
         let name = url
             .path_segments()
@@ -134,10 +141,31 @@ async fn resolve(client: &Client, entry: &Build) -> Result<(Value, BTreeMap<Stri
         } else {
             main.to_owned()
         };
-        files.insert(name, main);
-    }
+        files.insert(name.clone(), main);
+        Some(name)
+    } else {
+        None
+    };
 
-    Ok((version, files))
+    let hashes = files
+        .keys()
+        .map(|name| {
+            let value = if main_name.as_ref() == Some(name) {
+                &version["main_file_info"]["hash"]
+            } else {
+                &version["bundles"][name]["compressed_info"]["hash"]
+            };
+            let hash = value.as_str()?;
+            (hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()))
+                .then(|| (name.clone(), hash.to_ascii_lowercase()))
+        })
+        .collect();
+
+    Ok(Source {
+        manifest: version,
+        files,
+        hashes,
+    })
 }
 
 struct Transfer {
@@ -151,7 +179,7 @@ async fn transfer(
     url: &str,
     path: &Path,
     progress: &Arc<Mutex<Transfer>>,
-) -> Result<()> {
+) -> Result<String> {
     tokio::fs::create_dir_all(path.parent().context("Download has no parent directory")?).await?;
     let temporary = path.with_file_name(format!(
         "{}.part",
@@ -162,10 +190,12 @@ async fn transfer(
         let response = request(client, url).send().await?.error_for_status()?;
         let mut chunks = response.bytes_stream();
         let mut file = tokio::fs::File::create(&temporary).await?;
+        let mut digest = Sha256::new();
 
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk?;
             file.write_all(&chunk).await?;
+            digest.update(&chunk);
 
             let mut status = progress.lock().unwrap();
             status.bytes += chunk.len() as u64;
@@ -181,7 +211,7 @@ async fn transfer(
 
         tokio::fs::rename(&temporary, path).await?;
         progress.lock().unwrap().done += 1;
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, anyhow::Error>(hex::encode(digest.finalize()))
     }
     .await;
 
@@ -204,8 +234,12 @@ pub async fn file(client: &Client, url: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn cache(client: &Client, entry: &Build, root: &Path) -> Result<()> {
-    let (version, files) = resolve(client, entry).await?;
+pub async fn cache(
+    client: &Client,
+    source: &Source,
+    root: &Path,
+) -> Result<BTreeMap<String, String>> {
+    let files = &source.files;
     let progress = Arc::new(Mutex::new(Transfer {
         progress: Progress::for_path(root, "prepare/download", files.len(), "files"),
         done: 0,
@@ -214,22 +248,25 @@ pub async fn cache(client: &Client, entry: &Build, root: &Path) -> Result<()> {
 
     let targets: Vec<_> = files
         .iter()
-        .map(|(name, url)| (root.join(name), url.clone()))
+        .map(|(name, url)| (name.clone(), root.join(name), url.clone()))
         .collect();
-    stream::iter(targets)
-        .map(|(path, url)| {
+    let hashes = stream::iter(targets)
+        .map(|(name, path, url)| {
             let progress = progress.clone();
             let client = client.clone();
-            async move { transfer(&client, &url, &path, &progress).await }
+            async move {
+                let hash = transfer(&client, &url, &path, &progress).await?;
+                Ok::<_, anyhow::Error>((name, hash))
+            }
         })
         .buffer_unordered(5)
-        .try_collect::<Vec<_>>()
+        .try_collect::<BTreeMap<_, _>>()
         .await?;
     progress.lock().unwrap().progress.finish();
 
     tokio::fs::write(
         root.join(".cache-manifest.json"),
-        serde_json::to_vec_pretty(&version)?,
+        serde_json::to_vec_pretty(&source.manifest)?,
     )
     .await?;
 
@@ -238,5 +275,5 @@ pub async fn cache(client: &Client, entry: &Build, root: &Path) -> Result<()> {
         serde_json::to_vec_pretty(&files.keys().collect::<Vec<_>>())?,
     )
     .await?;
-    Ok(())
+    Ok(hashes)
 }

@@ -1,6 +1,9 @@
-use crate::{archive, convert::Store, download, pack, progress::log, release::Build};
+use crate::{
+    archive, convert::Store, download, pack, progress::log, release::Build, source::Record,
+};
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
+use serde_json::Value;
 use std::{fs, path::PathBuf, sync::Arc, time::Instant};
 use tokio::{
     sync::{Semaphore, oneshot},
@@ -10,7 +13,7 @@ use tokio::{
 pub struct Job {
     pub name: String,
     pub entry: Build,
-    pub released: Option<String>,
+    pub previous: Option<(String, Record)>,
 }
 
 impl Job {
@@ -71,6 +74,8 @@ impl Drop for Preparation {
 pub struct Prepared {
     job: Job,
     extraction: Option<pack::Prepared>,
+    source: Record,
+    manifest: Value,
     started: Instant,
 }
 
@@ -85,24 +90,84 @@ async fn prepare(
 
     let archive = job.archive();
     fs::create_dir_all(archive.parent().unwrap())?;
-    if !archive::reusable(&archive, &job.name, &job.entry)
-        && let Some(url) = &job.released
-    {
-        download::file(&client, url, &archive).await?;
-    }
-
-    let extraction = if archive::reusable(&archive, &job.name, &job.entry) {
-        let _ = downloaded.send(());
+    let resolved = download::resolve(&client, &job.entry).await?;
+    let cache = job.cache();
+    let mut cache_downloaded = false;
+    let hashes = if let Some(hashes) = &resolved.hashes {
+        log(&job.name, "prepare/source", "using published file hashes");
+        hashes.clone()
+    } else {
         log(
             &job.name,
-            "prepare/archive",
-            "existing archive accepted; extraction skipped",
+            "prepare/source",
+            "hashing source files during download",
         );
+        cache_downloaded = true;
+        download::cache(&client, &resolved, &cache).await?
+    };
+    let mut source = Record::new(job.entry.zip_name(&job.name), hashes)?;
+    let previous = archive.parent().unwrap().join("previous.zip");
+    let mut reuse = false;
+    if let Some((url, record)) = &job.previous {
+        if record.fingerprint == source.fingerprint {
+            log(
+                &job.name,
+                "prepare/source",
+                "source files unchanged; reusing previous payloads",
+            );
+            download::file(&client, url, &previous).await?;
+            reuse = archive::reusable(&previous, &job.name, &source.fingerprint);
+            if !reuse {
+                log(
+                    &job.name,
+                    "prepare/source",
+                    "previous archive metadata does not match; extracting source",
+                );
+                fs::remove_file(&previous)?;
+            }
+        } else {
+            let added = source
+                .files
+                .keys()
+                .filter(|name| !record.files.contains_key(*name))
+                .count();
+            let removed = record
+                .files
+                .keys()
+                .filter(|name| !source.files.contains_key(*name))
+                .count();
+            let changed = source
+                .files
+                .iter()
+                .filter(|(name, hash)| record.files.get(*name).is_some_and(|old| old != *hash))
+                .count();
+            log(
+                &job.name,
+                "prepare/source",
+                format!(
+                    "source changed; {added} added, {removed} removed, {changed} modified files"
+                ),
+            );
+        }
+    } else {
+        log(
+            &job.name,
+            "prepare/source",
+            "no source baseline for this format; extracting source",
+        );
+    }
+
+    let extraction = if reuse {
+        let _ = downloaded.send(());
         None
     } else {
-        let cache = job.cache();
+        if !cache_downloaded {
+            source = Record::new(
+                job.entry.zip_name(&job.name),
+                download::cache(&client, &resolved, &cache).await?,
+            )?;
+        }
         let output = job.output();
-        download::cache(&client, &job.entry, &cache).await?;
 
         // Acquire before notifying the driver so the next download overlaps this scan.
         if scanner.available_permits() == 0 {
@@ -128,6 +193,8 @@ async fn prepare(
     Ok(Prepared {
         job,
         extraction,
+        source,
+        manifest: resolved.manifest,
         started,
     })
 }
@@ -135,6 +202,7 @@ async fn prepare(
 pub struct Completed {
     pub name: String,
     pub archive: PathBuf,
+    pub source: Record,
     pub started: Instant,
 }
 
@@ -149,6 +217,8 @@ impl Prepared {
             let Self {
                 job,
                 extraction,
+                source,
+                manifest,
                 started,
             } = self;
             let archive = job.archive();
@@ -182,6 +252,7 @@ impl Prepared {
                     extract()?;
                 }
 
+                archive::stamp(&output, &source.fingerprint)?;
                 fs::remove_dir_all(job.cache())?;
                 archive::create(&output, &archive)?;
                 fs::remove_dir_all(output)?;
@@ -189,14 +260,25 @@ impl Prepared {
                 log(
                     &job.name,
                     "finish",
-                    "using existing archive; extraction and packaging skipped",
+                    "updating revision metadata; copying compressed payloads",
                 );
+                archive::rebase(
+                    &archive.parent().unwrap().join("previous.zip"),
+                    &archive,
+                    &job.entry,
+                    &source,
+                    &manifest,
+                )?;
+                if job.cache().exists() {
+                    fs::remove_dir_all(job.cache())?;
+                }
             }
 
             log(&job.name, "finish", "archive ready for upload");
             Ok(Completed {
                 name: job.name,
                 archive,
+                source,
                 started,
             })
         })

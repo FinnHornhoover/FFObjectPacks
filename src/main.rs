@@ -10,6 +10,7 @@ mod plan;
 mod progress;
 mod release;
 mod scan;
+mod source;
 mod terrain;
 mod texture;
 mod unity;

@@ -39,7 +39,7 @@ Detail MessagePack uses either:
 
 Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Terrain encoding is implemented in `src/terrain.rs`.
 
-Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
+Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP payload reuse checks build, source fingerprint and `FORMAT_VERSION`; revision and nickname are updated for the new release. Bump the format version when adding animation payloads or changing layouts.
 
 ## Animations
 
@@ -66,3 +66,7 @@ These are source curves for a wiki compiler, not animations embedded in the geom
 `models/rigs.msgpack` maps component ID to `script_type`, owning `game_object`, `transform` and converted source `data`. It retains ActorSkinCombiner, ActorWearIndexTable and ActorWearSkinTable components. Resource-table entries point to them with `{"rig": id}`.
 
 Use `ActorWearSkinTable.skins` to identify garment renderers. Map each renderer's joint index through `transformIndicesM` or `transformIndicesF` into the player's `ActorSkinCombiner.actorBones`; keep that garment's weights and bind matrices. Select the matching gender's mesh through InfoPacks. An unused opposite-gender map can be shorter than the mesh's bone list.
+
+## Source Identity
+
+Release assets include `sources.json`: `format_version` and a `builds` map. Each build records `archive`, `files` (filename → lowercase SHA-256 of downloaded bytes) and `fingerprint` (SHA-256 of compact JSON for that sorted file map). Filenames, additions and removals affect identity; URLs and InfoPacks revisions do not. Release-built ZIP manifests add `source_fingerprint`; local extractions may omit it.

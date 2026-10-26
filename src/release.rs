@@ -3,6 +3,7 @@ use crate::{
     download,
     pipeline::{Job, Preparation},
     progress::log,
+    source::Index,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
@@ -96,7 +97,7 @@ fn matches(release: &Value, names: &BTreeMap<String, String>) -> bool {
             .any(|line| line == format!("Object pack format: {}", crate::FORMAT_VERSION))
         && assets(release)
             .keys()
-            .filter(|name| !fixed_zip(name))
+            .filter(|name| name.ends_with(".zip") && !fixed_zip(name))
             .eq(names.keys())
 }
 
@@ -226,6 +227,21 @@ pub async fn run() -> Result<()> {
         })
         .map(|r| assets(&r))
         .unwrap_or_default();
+    let previous = if let Some(url) = released.get("sources.json") {
+        let index: Index = serde_json::from_value(download::json(&client, url).await?)?;
+        if index.format_version == crate::FORMAT_VERSION {
+            index.builds
+        } else {
+            BTreeMap::new()
+        }
+    } else {
+        BTreeMap::new()
+    };
+    let mut sources = Index {
+        format_version: crate::FORMAT_VERSION,
+        builds: BTreeMap::new(),
+    };
+
     log(
         tag,
         "release",
@@ -244,11 +260,15 @@ pub async fn run() -> Result<()> {
             .build()?,
     );
     let mut jobs = builds.into_iter().map(|(name, entry)| {
-        let released = released.get(&entry.zip_name(&name)).cloned();
+        let previous = previous.get(&name).and_then(|record| {
+            released
+                .get(&record.archive)
+                .map(|url| (url.clone(), record.clone()))
+        });
         Job {
             name,
             entry,
-            released,
+            previous,
         }
     });
     let mut pending = jobs
@@ -284,6 +304,9 @@ pub async fn run() -> Result<()> {
         ])
         .with_context(|| format!("[{}] [upload] failed", completed.name))?;
         log(&completed.name, "upload", "complete");
+        sources
+            .builds
+            .insert(completed.name.clone(), completed.source);
         fs::remove_dir_all(completed.archive.parent().unwrap())?;
         log(
             &completed.name,
@@ -294,6 +317,20 @@ pub async fn run() -> Result<()> {
             ),
         );
     }
+
+    let index = Path::new("artifacts/sources.json");
+    fs::write(index, serde_json::to_vec_pretty(&sources)?)?;
+    log(tag, "release/sources", "uploading source fingerprints");
+    gh(&[
+        "release",
+        "upload",
+        tag,
+        "--repo",
+        &repository,
+        "--clobber",
+        &index.to_string_lossy(),
+    ])?;
+    fs::remove_file(index)?;
 
     if let Some(existing) = existing {
         remove_fixed(&repository, tag, &existing)?;
