@@ -37,9 +37,9 @@ Detail MessagePack uses either:
 - `local-palette`: `records` byte strings and `indices`.
 - `sparse-soa`: `patches`, `layer_bytes`, `count_bytes`, `bounds`, `layer_indices`, `count_length`, `count_encoding`, `counts`. Counts are dense or `delta-nonzero`: start at index -1, read an unsigned LEB128 gap, advance by it, then assign the next byte. Other entries are zero.
 
-Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Reference decoders are in `scripts/ffobjects/terrain.py`.
+Each reconstructed patch uses `<6fII>` bounds centre/extent, layer byte length, count byte length, then layer and count bytes. Terrain encoding is implemented in `src/terrain.rs`.
 
-Fixed ZIPs are identical copies of their nonfixed packs; `manifest.json` identifies the source build and revision. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
+Fixed InfoPacks builds use the corresponding nonfixed object pack; fixed ZIPs are not published. ZIP reuse checks build, revision and `FORMAT_VERSION`. Bump the format version when adding animation payloads or changing layouts.
 
 ## Animations
 
