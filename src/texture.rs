@@ -80,11 +80,18 @@ pub fn decode(raw: &Value) -> Result<RgbaImage> {
         {
             let pixel = match format {
                 1 => [0, 0, 0, source[0]],
-                2 | 13 => [
-                    source[0] & 15,
-                    source[0] >> 4,
+                2 => [
                     source[1] & 15,
+                    source[0] >> 4,
+                    source[0] & 15,
                     source[1] >> 4,
+                ]
+                .map(|n| n * 17),
+                13 => [
+                    source[1] >> 4,
+                    source[1] & 15,
+                    source[0] >> 4,
+                    source[0] & 15,
                 ]
                 .map(|n| n * 17),
                 3 => [source[0], source[1], source[2], 255],
@@ -94,9 +101,9 @@ pub fn decode(raw: &Value) -> Result<RgbaImage> {
                 7 => {
                     let n = u16::from_le_bytes(source.try_into().unwrap());
                     [
-                        ((n & 31) * 255 / 31) as u8,
-                        (((n >> 5) & 63) * 255 / 63) as u8,
                         (((n >> 11) & 31) * 255 / 31) as u8,
+                        (((n >> 5) & 63) * 255 / 63) as u8,
+                        ((n & 31) * 255 / 31) as u8,
                         255,
                     ]
                 }

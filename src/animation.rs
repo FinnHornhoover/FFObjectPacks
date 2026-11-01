@@ -89,6 +89,27 @@ pub fn collect(scan: &Scan, selected: &BTreeSet<u32>, output: &Path) -> Result<B
             .push(*id);
     }
 
+    for (parent, names) in &mut children {
+        let order: Vec<_> = parent
+            .and_then(|id| scan.node(id))
+            .map(|n| {
+                n.data["children"]
+                    .array()
+                    .iter()
+                    .filter_map(Fields::id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for candidates in names.values_mut() {
+            candidates.sort_by_key(|id| {
+                order
+                    .iter()
+                    .position(|child| child == id)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+
     let (mut animations, mut rigs, mut models) = (BTreeMap::new(), BTreeMap::new(), HashMap::new());
     let mut used = BTreeSet::new();
     let (mut missing_clips, mut unresolved_paths, mut ambiguous_paths) =

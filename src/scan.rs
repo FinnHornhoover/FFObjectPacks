@@ -8,6 +8,7 @@ use crate::{
         bundle,
     },
     value::{Fields, array, content, map, packed, serial, write_json, write_pack},
+    world,
 };
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
@@ -250,9 +251,16 @@ impl Scan {
             4 => {
                 let go = self.ptr(asset, &raw["m_GameObject"]);
                 let parent = self.ptr(asset, &raw["m_Father"]);
+                let children = array(
+                    raw["m_Children"]
+                        .array()
+                        .iter()
+                        .map(|child| self.ptr(asset, child)),
+                );
                 map([
                     ("go", go),
                     ("parent", parent),
+                    ("children", children),
                     ("p", vector(&raw["m_LocalPosition"], "xyz")),
                     ("q", vector(&raw["m_LocalRotation"], "xyzw")),
                     ("s", vector(&raw["m_LocalScale"], "xyz")),
@@ -385,7 +393,11 @@ impl Scan {
                     let appearance = (tid < 0)
                         .then(|| schema.and_then(appearance::classify))
                         .flatten();
-                    let supported = visual(tid) || rig.is_some() || appearance.is_some();
+                    let world = (tid < 0)
+                        .then(|| schema.and_then(world::classify))
+                        .flatten();
+                    let supported =
+                        visual(tid) || rig.is_some() || appearance.is_some() || world.is_some();
                     if !supported && tid != 142 && !(scene && tid < 0) {
                         continue;
                     }
@@ -426,6 +438,9 @@ impl Scan {
                             raw = raw.without(&["m_GameObject", "m_Script", "m_ExtensionPtr"]);
                             raw.set("appearance_type", kind.into());
                         }
+                        if let Some(kind) = world {
+                            raw.set("world_type", kind.into());
+                        }
                         if tid == 142 {
                             for entry in raw["m_Container"].array() {
                                 let target = result.ptr(&asset, &entry[1]["asset"]).id();
@@ -464,7 +479,10 @@ impl Scan {
                                 if tid == 156 {
                                     result.terrains.push(id);
                                 }
-                                if scene && [23, 26, 104, 108, 111, 137, 154, 157].contains(&tid) {
+                                if world.is_some()
+                                    || [104, 108].contains(&tid)
+                                    || (scene && [23, 26, 111, 137, 154, 157].contains(&tid))
+                                {
                                     roots.push(id);
                                 }
                             } else {
@@ -630,7 +648,7 @@ fn vector(raw: &Value, axes: &str) -> Value {
 }
 
 fn component(tid: i32) -> bool {
-    tid < 0 || [4, 23, 26, 33, 108, 111, 137, 154].contains(&tid)
+    tid < 0 || [4, 23, 26, 33, 108, 111, 114, 137, 154].contains(&tid)
 }
 
 fn visual(tid: i32) -> bool {

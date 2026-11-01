@@ -4,13 +4,13 @@ FusionFall models, textures, animations and terrain for wiki previews, shipped s
 
 | Folder | Contents |
 |---|---|
-| `models/` | Entity indexes, GLB geometry, hierarchies, clothing rigs, appearances, palettes and shaders |
-| `animations/` | Source curves, clip indexes and model bindings |
+| `models/` | Assembled prefab GLBs, shared buffers, source hierarchies, clothing rigs, appearances and shaders |
+| `animations/` | Separate glTF clips, source curves and model bindings |
 | `textures/` | Lossless WebP images and original-path index |
-| `areas/` | Scenes, compact heightfields and detail data |
+| `areas/` | Scenes, compact terrain, colours, platforms and effect metadata |
 | `metadata/` | Materials, references and coverage |
 
-Start with `manifest.json`. [FORMAT.md](FORMAT.md) describes the loader contract.
+Start with `manifest.json` and its `prefabs` index. Prefabs include source materials and skins; clips load separately. The wiki supplies InfoPacks-driven texture swaps, dressed-player/HNPC composition and entity scale. Terrain remains compact source data. [FORMAT.md](FORMAT.md) describes the loader contract.
 
 ## Releases
 
@@ -29,4 +29,4 @@ cargo build --release --locked
 cargo run --release -- extract CACHE OUTPUT --build beta-20100104 --revision 17
 ```
 
-`release` runs the GitHub pipeline using `gh`, `GH_TOKEN`, `GITHUB_REPOSITORY` and `GITHUB_SHA`. Linux builds need `pkg-config`, `liblzma-dev` and `zlib1g-dev`. Image operations, BC decoding and WebP encoding use Rust crates; legacy Unity reading and the pack layout live in `src/`.
+`release` runs the GitHub pipeline using `gh`, `GH_TOKEN`, `GITHUB_REPOSITORY` and `GITHUB_SHA`. Linux builds need `pkg-config`, `liblzma-dev` and `zlib1g-dev`. The glTF/terrain implementation follows [Kamil’s UnityPackFF fork](https://github.com/kamilprzyb2/UnityPackFF), with material metadata for [ff-three](https://github.com/kamilprzyb2/ff-three); see `NOTICE`. Image operations, BC decoding and WebP encoding use Rust crates; legacy Unity reading and the pack layout live in `src/`.

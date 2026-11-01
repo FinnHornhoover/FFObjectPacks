@@ -151,11 +151,19 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
         let Some(node) = scan.node(*id) else {
             continue;
         };
-        if node.kind == 1 {
-            add_tree(scan, &children, &mut expanded, &mut todo, Some(*id));
+        let root = if node.kind == 4 {
+            node.data["go"].id()
+        } else {
+            Some(*id)
+        };
+        if root
+            .and_then(|id| scan.node(id))
+            .is_some_and(|n| n.kind == 1)
+        {
+            add_tree(scan, &children, &mut expanded, &mut todo, root);
             catalogs.push(Catalog {
                 path: path.clone(),
-                object: *id,
+                object: root.unwrap(),
                 category: category(path).into(),
             });
         } else if [21, 27, 28, 43].contains(&node.kind)
@@ -245,7 +253,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                 let mut dependencies = Vec::new();
                 refs(data, &mut dependencies);
                 todo.extend(&dependencies);
-                if !data["script_type"].is_nil() {
+                if !data["script_type"].is_nil() || !data["world_type"].is_nil() {
                     for id in dependencies {
                         add_tree(scan, &children, &mut expanded, &mut todo, Some(id));
                     }

@@ -2,8 +2,10 @@ use crate::{
     cache::Cache,
     convert::{self, Store},
     plan::{self, Plan},
+    prefab,
     scan::Scan,
     value::{Fields, array, map, serial, write, write_json, write_pack},
+    world,
 };
 use anyhow::Result;
 use rmpv::Value;
@@ -52,6 +54,8 @@ pub fn finish(
 ) -> Result<()> {
     let Prepared { cache, mut scan } = prepared;
     let mut planned = plan::build(&scan, output)?;
+    let prefab_index = prefab::Index::capture(&scan, &planned);
+    world::export(&scan, output)?;
     drop(std::mem::take(&mut scan.nodes));
 
     let exported = convert::export(&cache, &scan, &planned.selection, output, store)?;
@@ -66,6 +70,8 @@ pub fn finish(
             .extend(result.as_map().unwrap().clone());
     }
 
+    prefab::export(&prefab_index, &mut planned, output)?;
+    drop(prefab_index);
     catalogs(&planned, output)?;
     for (materials, path) in [
         (true, "metadata/materials.msgpack"),
@@ -110,7 +116,7 @@ pub fn finish(
         ),
         (
             "geometry",
-            "glTF right-handed, reflected X; reverse winding; tangent X and W negated".into()
+            "glTF right-handed, reflected X; reverse winding; tangent X negated; tangent W includes reflection and V flip".into()
         ),
         (
             "conversion",
@@ -118,7 +124,7 @@ pub fn finish(
         ),
         (
             "uv",
-            "Source Unity UVs; texture images vertically flipped from Unity storage; use flipY=false with glTF".into()
+            "glTF UVs (u, 1-v); texture images vertically flipped from Unity storage; use flipY=false".into()
         ),
         (
             "terrain",
@@ -142,12 +148,20 @@ pub fn finish(
                 ("rig_bindings", true.into()),
                 ("appearance_metadata", true.into()),
                 ("shader_metadata", true.into()),
+                ("prefabs", true.into()),
+                (
+                    "prefab_animation_encoding",
+                    "sampled glTF with source duration and material tracks".into(),
+                ),
+                ("world_metadata", true.into()),
             ]),
         ),
         ("coordinates", coordinates),
     ]);
     for (key, path) in [
         ("models", "models/index.json"),
+        ("prefabs", "models/prefabs/index.json"),
+        ("world", "areas/world.msgpack"),
         ("areas", "areas/index.json"),
         ("animations", "animations/index.json"),
         ("rigs", "models/rigs.msgpack"),
@@ -183,7 +197,7 @@ pub fn finish(
     write_json(&output.join("manifest.json"), &manifest)?;
     write(
         &output.join("README.md"),
-        b"# FusionFall Object Pack\n\nStart with manifest.json and the models/ and areas/ indexes.\nUse animations/ for source clips and bindings, models/rigs.msgpack for clothing maps, and models/skins/ for weights and bind poses.\nFormat: https://github.com/FinnHornhoover/FFObjectPacks/blob/main/FORMAT.md\n"
+        b"# FusionFall Object Pack\n\nStart with manifest.json and models/prefabs/index.json for assembled GLBs and separate clips.\nUse models/rigs.msgpack for clothing maps, animations/ for source curves and areas/ for terrain and world metadata.\nFormat: https://github.com/FinnHornhoover/FFObjectPacks/blob/main/FORMAT.md\n"
     )?;
     Ok(())
 }

@@ -9,7 +9,7 @@ pub struct Mesh {
     pub info: Value,
 }
 
-fn packed_ints(raw: &Value) -> Result<Vec<u32>> {
+pub(crate) fn packed_ints(raw: &Value) -> Result<Vec<u32>> {
     let count = usize::try_from(raw["m_NumItems"].integer())?;
     let bits = usize::try_from(raw["m_BitSize"].integer())?;
     ensure!(bits <= 32, "Packed integer exceeds 32 bits");
@@ -41,7 +41,7 @@ fn packed_ints(raw: &Value) -> Result<Vec<u32>> {
     Ok(output)
 }
 
-fn packed_floats(raw: &Value) -> Result<Vec<f64>> {
+pub(crate) fn packed_floats(raw: &Value) -> Result<Vec<f64>> {
     let bits = raw["m_BitSize"].integer();
     let scale = if bits == 0 {
         0.0
@@ -169,7 +169,7 @@ impl Glb {
     }
 }
 
-fn glb(document: &Json, binary: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn glb(document: &Json, binary: &[u8]) -> Result<Vec<u8>> {
     let mut json = serde_json::to_vec(document)?;
     while json.len() % 4 != 0 {
         json.push(b' ');
@@ -242,6 +242,7 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
         "scenes": [{ "nodes": [] }]
     });
     if count == 0 {
+        document["scenes"] = json!([{}]);
         return Ok(Mesh {
             glb: glb(&document, &[])?,
             skin: None,
@@ -262,7 +263,19 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
         position[0] *= -1.0;
     }
     for normal in &mut normals {
-        normal[0] *= -1.0;
+        ensure!(
+            normal.iter().all(|n| n.is_finite()),
+            "Nonfinite vertex normal"
+        );
+        let length = normal.iter().map(|n| n * n).sum::<f32>().sqrt();
+        if length > 0.0 {
+            for n in normal.iter_mut() {
+                *n /= length;
+            }
+            normal[0] *= -1.0;
+        } else {
+            normal.copy_from_slice(&[0.0, 1.0, 0.0]);
+        }
     }
 
     let mut writer = Glb {
@@ -290,10 +303,27 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
         uv.len() % count == 0,
         "UV channel has a partial vertex array"
     );
+    let invalid_uv_values = std::cell::Cell::new(0u64);
+    let flip_uv = |values: &[Vec<f32>]| -> Vec<Vec<f32>> {
+        values
+            .iter()
+            .map(|v| {
+                let finite = |n: f32| {
+                    if n.is_finite() {
+                        n
+                    } else {
+                        invalid_uv_values.set(invalid_uv_values.get() + 1);
+                        0.0
+                    }
+                };
+                vec![finite(v[0]), 1.0 - finite(v[1])]
+            })
+            .collect()
+    };
     for (index, values) in uv.chunks(count).enumerate() {
         attributes.insert(
             format!("TEXCOORD_{index}"),
-            writer.floats(values, "VEC2", false).into(),
+            writer.floats(&flip_uv(values), "VEC2", false).into(),
         );
     }
     if !compressed {
@@ -303,7 +333,7 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
                 ensure!(values.len() == count, "UV count differs from vertex count");
                 attributes.insert(
                     format!("TEXCOORD_{}", index + 1),
-                    writer.floats(&values, "VEC2", false).into(),
+                    writer.floats(&flip_uv(&values), "VEC2", false).into(),
                 );
             }
         }
@@ -352,8 +382,21 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
             "Tangent count differs from vertex count"
         );
         for tangent in &mut tangents {
+            ensure!(
+                tangent.iter().all(|n| n.is_finite()),
+                "Nonfinite vertex tangent"
+            );
+            let length = tangent[..3].iter().map(|n| n * n).sum::<f32>().sqrt();
+            if length > 0.0 {
+                for n in &mut tangent[..3] {
+                    *n /= length;
+                }
+            } else {
+                tangent[..3].copy_from_slice(&[1.0, 0.0, 0.0]);
+            }
             tangent[0] *= -1.0;
-            tangent[3] *= -1.0;
+            // Reflection and the V flip each reverse tangent handedness.
+            tangent[3] = if tangent[3] < 0.0 { -1.0 } else { 1.0 };
         }
         attributes.insert(
             "TANGENT".into(),
@@ -513,6 +556,7 @@ pub fn convert(raw: &Value) -> Result<Mesh> {
             ("triangles", (triangle_count as u64).into()),
             ("attributes", array(attributes.keys().cloned())),
             ("source_empty", false.into()),
+            ("invalid_uv_values", invalid_uv_values.get().into()),
         ]),
     })
 }

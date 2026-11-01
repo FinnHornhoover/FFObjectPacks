@@ -1,6 +1,13 @@
 The legacy Unity asset reader is adapted from UnityPack/UnityPackFF.
 
+FusionFall glTF and terrain export algorithms and metadata conventions adapted
+from Kamil Przybylski’s UnityPackFF fork, ff-unpack and ff-three:
+https://github.com/kamilprzyb2/UnityPackFF
+https://github.com/kamilprzyb2/ff-unpack
+https://github.com/kamilprzyb2/ff-three
+
 Copyright (c) Jerome Leclanche
+Copyright (c) 2026 Kamil Przybylski
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

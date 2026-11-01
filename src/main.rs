@@ -5,9 +5,11 @@ mod cache;
 mod convert;
 mod download;
 mod geometry;
+mod gltf;
 mod pack;
 mod pipeline;
 mod plan;
+mod prefab;
 mod progress;
 mod release;
 mod runtime;
@@ -18,12 +20,13 @@ mod terrain;
 mod texture;
 mod unity;
 mod value;
+mod world;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 #[derive(Parser)]
 #[command(version, about)]

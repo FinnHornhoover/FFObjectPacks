@@ -1,4 +1,4 @@
-# Pack Format 3
+# Pack Format 4
 
 Read `manifest.json` for file paths and coordinate conventions. Paths are relative to the pack root. Metadata uses MessagePack; navigation indexes use JSON.
 
@@ -10,7 +10,25 @@ Read `manifest.json` for file paths and coordinate conventions. Paths are relati
 - Model descriptors: source path, object ID, hierarchy `graph` and `root_node`.
 - Texture index: original paths → shared WebP files, including clothing variants.
 
-GLBs preserve vertex order, UV sets, colours and tangents. Renderer materials bind `slot_0`, `slot_1`, etc.; source shader properties live in the material table. Bind poses and weights are in `models/skins/`. Source animation clips are in `animations/`; geometry GLBs do not include glTF skins or animation tracks.
+Geometry GLBs preserve vertex order and use shared external `models/buffers/*.bin` files. UV V is flipped for glTF; normals/tangents are normalized. Nonfinite source UV components become zero and are counted by `invalid_uv_values`; prefab warnings identify affected renderers. Empty source meshes retain descriptors. Renderer materials bind `slot_0`, `slot_1`, etc. Original weights and bind poses remain in `models/skins/`, source curves in `animations/clips/`.
+
+## Assembled Prefabs
+
+`manifest.prefabs` points to `models/prefabs/index.json`: object ID → `{file, clips, renderers, warnings}`. Model catalog descriptors also include this as `prefab`. Source aliases/candidates remain separate; no archive precedence or entity appearance is guessed.
+
+- `file`: prefab GLB, with hierarchy, source materials and skins. External geometry buffers and WebP images are shared within the ZIP. Missing skins fall back to unskinned geometry with a warning; unavailable model/clip exports are recorded in coverage.
+- `clips`: ordered `{name, object, binding, file, duration}` records. Each clip GLB has the model's node order/topology but omits rest-pose TRS, meshes/skins/images, and one sampled transform animation or `extras.material_clips`. Load clips on demand and bind by node index, never node name. Duplicate names are retained by source/binding identity.
+- `renderers`: source component ID → output mesh-node indexes. Mesh-node extras also contain `renderer`, `source_node` and `skinned`. Skinned meshes live at scene roots; material tracks explicitly identify their renderer nodes.
+- Actor-node `extras.actor_bones` maps the actor bone table to node indexes. Garment skins retain `extras.actor_bones.m/f` maps into those actor tables, including opposite-gender length differences and negative entries.
+- Saved material properties inherit missing shader defaults. Materials contain portable PBR defaults and `extras.shader`, `shader_object`, `object`, `colors`, `floats`, `textures`. Texture entries retain source identity, scale/offset and glTF texture indexes; `_MainTex` also binds base colour. WebP uses required `EXT_texture_webp`. These extras support ff-three material translation; PBR alone does not reproduce the client.
+- Prefab source activity flags remain metadata: cached prefabs are commonly stored inactive and are instantiated when requested. Do not hide the preview merely because a source node is inactive.
+- Root extras contain `clips` (name → relative clip URL), `renderers`, `object`, `kind` and warnings. Animation-node extras retain the clip list/default, wrap mode, enabled/automatic settings and binding ID. File references replace embedded animation indexes.
+
+GlTF samplers use LINEAR interpolation over source Hermite samples, source key times and exact endpoints. Infinite slopes retain step boundaries using adjacent float32 times. Quaternion samples are normalized with hemisphere continuity. Redundant samples are reduced within `1e-5` per scalar/vector component or `1e-4` radians for rotation, measured against the full sample grid. Raw source curves remain unchanged. Constant tracks use one key; **duration stays in `animation.extras.duration` and document `extras.clip.duration`**, so readers must not infer source duration solely from key times. Negative source keys influence evaluation at t=0 but are not emitted as negative glTF times.
+
+Material tracks remain in `extras.float_curves`, keyed by `path:attribute`: `{input, output, node, source_node, renderers, renderer_nodes, class_id, attribute}`. Accessors contain sampled scalar values; nonfinite samples use inline `times`/`values` with nulls. Material-only clips use document `extras.material_clips`. The source payload retains events and infinity settings; runtime layering/additive policies remain a consumer concern.
+
+Numeric texture/accessor indexes in extras are live references. Optimizers must preserve and remap them explicitly. Ordinary pruning does not understand them. The wiki still chooses table-driven texture overrides, item slots, player/HNPC composition, palettes and entity scale.
 
 ## Hierarchies
 
@@ -24,13 +42,17 @@ Renderers use `[component ID, class ID, transform ID, mesh ID, attributes]`. Ext
 
 ## Coordinates
 
-Hierarchy, terrain and bind data retain Unity coordinates. GLB geometry reflects X and reverses winding; tangent X/W change sign. When assembling scenes, reflect position X and quaternion Y/Z, and conjugate bind matrices by `diag(-1,1,1,1)`.
+Hierarchy, terrain and bind data retain Unity coordinates. GLB geometry reflects X and reverses winding; tangent X changes sign. Reflection and the V flip cancel the tangent-W sign changes. When assembling scenes, reflect position X and quaternion Y/Z, and conjugate bind matrices by `diag(-1,1,1,1)`.
 
-UVs retain source values; WebP images are vertically flipped from Unity storage. Use `flipY=false` for glTF textures and set colour spaces according to texture role.
+GLB UVs use `(u, 1-v)`; WebP images are vertically flipped from Unity storage. Use `flipY=false`. Client-faithful shaders use raw texture values without output colour conversion; a portable PBR fallback uses conventional colour management. Source material scale/offset values remain in Unity UV space.
 
 ## Terrain
 
-Heights: four-byte magic + `<III>` width, height, signed flag + row-major 16-bit samples. `HMP1` is raw; `HMD1` requires cumulative sums per row modulo 65536; `HMX1` requires cumulative XOR per row. Reinterpret as int16 when signed. Scale and layer settings remain in the terrain descriptor.
+Heights: four-byte magic + `<III>` width, height, signed flag + source-order 16-bit samples. `HMP1` is raw; `HMD1` requires cumulative sums per row modulo 65536; `HMX1` requires cumulative XOR per row. Reinterpret as int16 when signed. Scale and layer settings remain in the terrain descriptor.
+
+Heights retain Unity's X-major order: `samples[x * height + z]`. Official-client world height is `sample / 32766 * m_Scale.y`; horizontal cell spacing is `m_Scale.x/z`. `m_Shifts` retains horizontal one-cell vertex shifts; the adjacent-cell diagonal rule must also be applied when meshing.
+
+`manifest.world` points to `areas/world.msgpack`: object ID → `{type, asset, data}` for field-identified DongColorSetup, MapAttributeTable, EpPlatformTrigger, Waypoint and EffectEmitterController scripts, plus lights and RenderSettings. References use pack-local IDs. Graph settings retain selected script records too; effect-prefab dependencies participate in selection. World geometry, terrain blending, platform simulation, grass and area rendering are consumer work.
 
 Detail MessagePack uses either:
 
@@ -59,7 +81,7 @@ Model descriptors add `animations` (binding IDs within their hierarchy) and `rig
 
 Coverage adds `animations`: clip/binding/rig counts, unbound clip IDs, missing clip references and unresolved/ambiguous target paths. Unbound means no exported Animation component references the clip; runtime code may still use it. Path issues are preserved as coverage, without renaming tracks or dropping their payloads. `missing` retains dangling source material/texture/shader references; available assets are still exported. Source references are not guessed from unrelated object IDs. CDN text placeholders are skipped and recorded as `non-bundle` entries in `scan_errors`.
 
-These are source curves for a wiki compiler, not animations embedded in the geometry GLBs. Packed rotation times are cumulative integer deltas in hundredths of a second. Preserve their packed slopes; exact Unity interpolation and runtime layers/events are separate playback concerns. Apply the hierarchy coordinate conversion to animation values and tangents when compiling.
+These source curves are retained alongside sampled glTF clips. Geometry-only GLBs do not embed them. Packed rotation times are cumulative integer deltas in hundredths of a second. Preserve their packed slopes; exact Unity interpolation and runtime layers/events are separate playback concerns. Apply the hierarchy coordinate conversion to animation values and tangents when compiling.
 
 ## Appearances
 

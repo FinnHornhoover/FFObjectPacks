@@ -1,6 +1,6 @@
 use crate::{
     cache::Cache,
-    geometry,
+    geometry, gltf,
     plan::Selection,
     progress::Progress,
     scan::Scan,
@@ -87,7 +87,7 @@ impl Store {
     }
 
     fn materialize(&self, result: &Value, output: &Path) -> Result<()> {
-        for field in ["file", "skin_data"] {
+        for field in ["file", "skin_data", "buffer_file"] {
             if let Some(relative) = result[field].as_str() {
                 let source = self.root.join(relative);
                 let target = output.join(relative);
@@ -114,9 +114,13 @@ impl Store {
         let (result, reused) = self.get(&key, || {
             let mesh = geometry::convert(&normalized)?;
             let mut result = mesh.info;
+            let (glb, buffer) = gltf::externalize(&self.root, &mesh.glb)?;
+            if let Some(file) = buffer {
+                result.set("buffer_file", file.into());
+            }
             result.set(
                 "file",
-                content(&self.root, "models/geometry", &mesh.glb, ".glb")?.into(),
+                content(&self.root, "models/geometry", &glb, ".glb")?.into(),
             );
             if let Some(skin) = mesh.skin {
                 result.set(
