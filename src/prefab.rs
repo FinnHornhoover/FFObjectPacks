@@ -30,6 +30,7 @@ struct Assembly {
 }
 
 pub struct Index {
+    roots: BTreeSet<u32>,
     nodes: HashMap<u32, Node>,
     transforms: HashMap<u32, u32>,
     paths: Vec<String>,
@@ -48,10 +49,20 @@ impl Index {
                     .flatten()
             })
             .collect();
-        let mut todo: Vec<_> = plan
+        let roots: BTreeSet<_> = plan
             .catalogs
             .iter()
-            .filter_map(|entry| transforms.get(&entry.object).map(|id| (*id, true)))
+            .map(|entry| entry.object)
+            .chain(scan.nodes.iter().flatten().filter_map(|node| {
+                (node.data["world_type"].text() == "EffectEmitterController")
+                    .then(|| rawref(&node.data, "nifObject"))
+                    .flatten()
+            }))
+            .filter(|id| transforms.contains_key(id))
+            .collect();
+        let mut todo: Vec<_> = roots
+            .iter()
+            .filter_map(|root| transforms.get(root).map(|id| (*id, true)))
             .collect();
         let mut nodes = HashMap::new();
         let mut expanded = HashSet::new();
@@ -99,6 +110,7 @@ impl Index {
         transforms.shrink_to_fit();
 
         Self {
+            roots,
             nodes,
             transforms,
             paths: scan.paths.keys().cloned().collect(),
@@ -271,17 +283,12 @@ pub fn export(index: &Index, plan: &mut Plan, output: &Path) -> Result<()> {
         clips: HashMap::new(),
         geometry: HashMap::new(),
     };
-    let roots: BTreeSet<_> = plan
-        .catalogs
-        .iter()
-        .map(|e| e.object)
-        .filter(|id| index.transform(*id).is_some())
-        .collect();
+    let roots = &index.roots;
     let mut progress = Progress::for_path(output, "finish/prefabs", roots.len(), "models");
     let mut entries = BTreeMap::new();
     let mut failed = Vec::new();
     let mut issues = 0;
-    for (i, root) in roots.into_iter().enumerate() {
+    for (i, &root) in roots.iter().enumerate() {
         match exporter.model(root) {
             Ok(entry) => {
                 issues += entry["warnings"].as_array().unwrap().len();

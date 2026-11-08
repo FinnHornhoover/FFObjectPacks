@@ -155,6 +155,7 @@ pub fn finish(
                 ),
                 ("world_metadata", true.into()),
                 ("particle_metadata", true.into()),
+                ("weapon_metadata", true.into()),
             ]),
         ),
         ("coordinates", coordinates),

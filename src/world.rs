@@ -9,7 +9,9 @@ use std::{collections::BTreeMap, path::Path};
 
 pub fn classify(tree: &Tree) -> Option<&'static str> {
     let has = |name: &str| tree.children.iter().any(|field| field.name == name);
-    if has("fogColor") && has("skyColor") && has("lightColor") {
+    if has("m_pBulletData") {
+        Some("BulletTableScript")
+    } else if has("fogColor") && has("skyColor") && has("lightColor") {
         Some("DongColorSetup")
     } else if has("attributes") {
         Some("MapAttributeTable")
