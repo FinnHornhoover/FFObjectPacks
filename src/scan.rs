@@ -481,7 +481,8 @@ impl Scan {
                                 }
                                 if world.is_some()
                                     || [104, 108].contains(&tid)
-                                    || (scene && [23, 26, 111, 137, 154, 157].contains(&tid))
+                                    || (scene
+                                        && [12, 15, 23, 26, 87, 111, 137, 154, 157].contains(&tid))
                                 {
                                     roots.push(id);
                                 }
@@ -648,12 +649,12 @@ fn vector(raw: &Value, axes: &str) -> Value {
 }
 
 fn component(tid: i32) -> bool {
-    tid < 0 || [4, 23, 26, 33, 108, 111, 114, 137, 154].contains(&tid)
+    tid < 0 || [4, 12, 15, 23, 26, 33, 87, 108, 111, 114, 137, 154].contains(&tid)
 }
 
 fn visual(tid: i32) -> bool {
     [
-        1, 4, 21, 23, 26, 27, 28, 33, 43, 48, 74, 89, 104, 108, 111, 137, 154, 156, 157,
+        1, 4, 12, 15, 21, 23, 26, 27, 28, 33, 43, 48, 74, 87, 89, 104, 108, 111, 137, 154, 156, 157,
     ]
     .contains(&tid)
 }

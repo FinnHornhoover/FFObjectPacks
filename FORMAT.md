@@ -1,4 +1,4 @@
-# Pack Format 4
+# Pack Format 5
 
 Read `manifest.json` for file paths and coordinate conventions. Paths are relative to the pack root. Metadata uses MessagePack; navigation indexes use JSON.
 
@@ -52,7 +52,7 @@ Heights: four-byte magic + `<III>` width, height, signed flag + source-order 16-
 
 Heights retain Unity's X-major order: `samples[x * height + z]`. Official-client world height is `sample / 32766 * m_Scale.y`; horizontal cell spacing is `m_Scale.x/z`. `m_Shifts` retains horizontal one-cell vertex shifts; the adjacent-cell diagonal rule must also be applied when meshing.
 
-`manifest.world` points to `areas/world.msgpack`: object ID → `{type, asset, data}` for field-identified DongColorSetup, MapAttributeTable, EpPlatformTrigger, Waypoint and EffectEmitterController scripts, plus lights and RenderSettings. References use pack-local IDs. Graph settings retain selected script records too; effect-prefab dependencies participate in selection. World geometry, terrain blending, platform simulation, grass and area rendering are consumer work.
+`manifest.world` points to `areas/world.msgpack`: object ID → `{type, asset, data}` for field-identified DongColorSetup, MapAttributeTable, EpPlatformTrigger, Waypoint and EffectEmitterController scripts, plus lights and RenderSettings. Format 5 also retains ParticleEmitterController and ParticleTrailController scripts and native ParticleRenderer (26), ParticleAnimator (12), EllipsoidParticleEmitter (15) and MeshParticleEmitter (87) records, plus MeshRenderer records owned by a trail controller (`TrailRenderer`), with their original fields and pack-local references. Group components by `data.m_GameObject.r`; EffectEmitterController particle entries reference that GameObject through `particlePrefab.r`. Renderer material references resolve through the materials metadata. Timing keys, forces, colours, billboard modes, size/rotation curves and atlas settings remain source data for the consumer. References use pack-local IDs. Graph settings retain selected script records too; effect-prefab dependencies participate in selection. World geometry, terrain blending, platform simulation, grass and area rendering are consumer work.
 
 Detail MessagePack uses either:
 

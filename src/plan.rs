@@ -214,7 +214,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                 todo.extend(data["go"].id());
             }
             33 => todo.extend(data["mesh"].id()),
-            23 | 26 | 137 => {
+            12 | 15 | 23 | 26 | 87 | 137 => {
                 refs(data, &mut todo);
                 if node.kind == 23
                     && let Some(go) = rawref(data, "m_GameObject").and_then(|id| scan.node(id))

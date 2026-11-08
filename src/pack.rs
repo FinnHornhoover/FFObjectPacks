@@ -154,6 +154,7 @@ pub fn finish(
                     "sampled glTF with source duration and material tracks".into(),
                 ),
                 ("world_metadata", true.into()),
+                ("particle_metadata", true.into()),
             ]),
         ),
         ("coordinates", coordinates),
