@@ -1,4 +1,4 @@
-# Pack Format 6
+# Pack Format 7
 
 Read `manifest.json` for file paths and coordinate conventions. Paths are relative to the pack root. Metadata uses MessagePack; navigation indexes use JSON.
 
@@ -82,6 +82,19 @@ Model descriptors add `animations` (binding IDs within their hierarchy) and `rig
 Coverage adds `animations`: clip/binding/rig counts, unbound clip IDs, missing clip references and unresolved/ambiguous target paths. Unbound means no exported Animation component references the clip; runtime code may still use it. Path issues are preserved as coverage, without renaming tracks or dropping their payloads. `missing` retains dangling source material/texture/shader references; available assets are still exported. Source references are not guessed from unrelated object IDs. CDN text placeholders are skipped and recorded as `non-bundle` entries in `scan_errors`.
 
 These source curves are retained alongside sampled glTF clips. Geometry-only GLBs do not embed them. Packed rotation times are cumulative integer deltas in hundredths of a second. Preserve their packed slopes; exact Unity interpolation and runtime layers/events are separate playback concerns. Apply the hierarchy coordinate conversion to animation values and tangents when compiling.
+
+## Audio
+
+`manifest.audio` points to `audio/index.json`, containing paths to four MessagePack files:
+
+- `clips`: `{clips, paths}`. `clips` maps AudioClip IDs to source fields plus `asset`, `name`, `source_paths`, `file`, `bytes`, `source_bytes`, `mime`, `encoding` and `supported`. `paths` maps case-insensitive original asset paths to all candidate clip IDs. Original `.wav` aliases commonly point to Ogg payloads; use the exported file and MIME type. Clips without aliases remain available by ID.
+- `events`: AnimationClip ID → ordered source events. Fields such as `time`, `functionName`, `data` and `messageOptions` remain intact. `sound` events add an `audio` lookup key; `attacksound` delegates to the equipped weapon's InfoPacks sound table. Playback GLBs also retain these events in document `extras.clip.events` and animation/material-clip `extras.events`. Event-only clips retain their last event time as duration.
+- `world`: object ID → `{type, asset, data}` for MusicDataStorage, MusicController, EnviroSoundScript and AudioSource. Region rows and environmental emitters add `audio` lookup keys. Polygons, array order, instance flags, delays, source positions, owning GameObject references and AudioSource settings remain unchanged. Group sources with their hierarchy through `m_GameObject.r` and the node map.
+- `references`: lookup key → `{variants: [{path, objects}]}`. `(RAND:min-max)` expressions expand inclusively, including multiple expressions; choices remain a runtime decision. Missing variants have empty `objects`; multiple candidates remain explicit. Invalid/excessive expressions retain an `error`. Null `audio` keys indicate empty/sentinel names such as `none.ogg`.
+
+Audio files are separate from GLBs and shared by content. Ogg streams use deterministic serial numbers with recomputed page CRCs; packet bytes, sample positions and page layout are unchanged. Unsupported or malformed payloads are preserved as files with `supported=false` and an `error`; empty/external payloads have no file. No audio is re-encoded. Coverage reports unsupported clips, scan failures, unaliased clips, missing clip/path references, ambiguous paths and invalid patterns.
+
+`musicDatas` and `ambientDatas` are separate ordered geographic region lists, not wiki area IDs. Their `points` use source world X/Z coordinates and `bInstanceFlag` distinguishes instance regions. Client ambience loops; ordinary music uses its delay after completion. `EvSoundArray` contains positioned loops loaded per terrain tile. Music/ambience resolve under `bgm/`, emitters under `enviro sound/`, animation and bullet sounds under `sound/`. Bullet impact lookup keys are included in `references`; weapon sound strings already live in InfoPacks. Runtime sound selection, attenuation, fades, seasonal overrides and browser playback are consumer work.
 
 ## Appearances
 

@@ -156,6 +156,9 @@ pub fn finish(
                 ("world_metadata", true.into()),
                 ("particle_metadata", true.into()),
                 ("weapon_metadata", true.into()),
+                ("audio", true.into()),
+                ("audio_events", true.into()),
+                ("ambience_metadata", true.into()),
             ]),
         ),
         ("coordinates", coordinates),
@@ -166,6 +169,7 @@ pub fn finish(
         ("world", "areas/world.msgpack"),
         ("areas", "areas/index.json"),
         ("animations", "animations/index.json"),
+        ("audio", "audio/index.json"),
         ("rigs", "models/rigs.msgpack"),
         ("appearances", "models/appearances/index.json"),
         ("materials", "metadata/materials.msgpack"),
@@ -199,7 +203,7 @@ pub fn finish(
     write_json(&output.join("manifest.json"), &manifest)?;
     write(
         &output.join("README.md"),
-        b"# FusionFall Object Pack\n\nStart with manifest.json and models/prefabs/index.json for assembled GLBs and separate clips.\nUse models/rigs.msgpack for clothing maps, animations/ for source curves and areas/ for terrain and world metadata.\nFormat: https://github.com/FinnHornhoover/FFObjectPacks/blob/main/FORMAT.md\n"
+        b"# FusionFall Object Pack\n\nStart with manifest.json and models/prefabs/index.json for assembled GLBs and separate clips.\nUse models/rigs.msgpack for clothing maps, animations/ for source curves, audio/ for sounds and ambience, and areas/ for terrain and world metadata.\nFormat: https://github.com/FinnHornhoover/FFObjectPacks/blob/main/FORMAT.md\n"
     )?;
     Ok(())
 }

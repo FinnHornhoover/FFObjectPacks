@@ -186,7 +186,8 @@ impl Exporter<'_> {
                         }
                     }
                     animation["extras"]["float_curves"] = Json::Object(floats);
-                    cw.json["extras"] = json!({"clip":{"name":clip.name,"duration":clip.duration,"source_clip":clip_id,"binding":binding_id}});
+                    animation["extras"]["events"] = finite_json(&clip.events);
+                    cw.json["extras"] = json!({"clip":{"name":clip.name,"duration":clip.duration,"source_clip":clip_id,"binding":binding_id,"events":finite_json(&clip.events)}});
                     if animation["channels"].as_array().unwrap().is_empty() {
                         let mut mc = animation["extras"].clone();
                         mc["name"] = clip.name.clone().into();

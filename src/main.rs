@@ -1,6 +1,7 @@
 mod animation;
 mod appearance;
 mod archive;
+mod audio;
 mod cache;
 mod convert;
 mod download;
@@ -26,7 +27,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 #[derive(Parser)]
 #[command(version, about)]

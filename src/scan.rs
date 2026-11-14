@@ -1,5 +1,5 @@
 use crate::{
-    appearance,
+    appearance, audio,
     cache::Cache,
     progress::Progress,
     runtime, shader, terrain,
@@ -202,6 +202,7 @@ impl Scan {
                 ("name", default(&raw, "m_Name", "".into())),
                 ("file", file.into()),
                 ("sample_rate", raw["m_SampleRate"].clone()),
+                ("events", audio::events(&raw["m_Events"])),
                 ("curve_types", array(curves)),
                 ("paths", array(targets)),
             ]));
@@ -218,6 +219,10 @@ impl Scan {
         }
 
         Ok(match tid {
+            83 => {
+                self.convert(asset, &mut raw);
+                audio::describe(&raw, output)?
+            }
             43 => map([("name", default(&raw, "m_Name", "".into()))]),
             48 => {
                 self.convert(asset, &mut raw);
@@ -305,15 +310,6 @@ impl Scan {
         let mut progress =
             Progress::for_path(&cache.root, "prepare/scan", cache.files.len(), "files");
         for (index, path) in cache.files.iter().enumerate() {
-            let filename = path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_ascii_lowercase();
-            if filename.contains("music") || filename.contains("fusound") {
-                continue;
-            }
-
             let source = path
                 .strip_prefix(&cache.root)?
                 .to_string_lossy()
@@ -359,9 +355,10 @@ impl Scan {
                         progress.update(
                             index,
                             format!(
-                                "assets={} clips={} rigs={} errors={}",
+                                "assets={} clips={} sounds={} rigs={} errors={}",
                                 result.assets.len(),
                                 result.clips.len(),
+                                result.counts.get("83").copied().unwrap_or(0),
                                 result.rigs.len(),
                                 result.errors.len()
                             ),
@@ -396,8 +393,14 @@ impl Scan {
                     let world = (tid < 0)
                         .then(|| schema.and_then(world::classify))
                         .flatten();
-                    let supported =
-                        visual(tid) || rig.is_some() || appearance.is_some() || world.is_some();
+                    let audio_type = (tid < 0)
+                        .then(|| schema.and_then(audio::classify))
+                        .flatten();
+                    let supported = visual(tid)
+                        || rig.is_some()
+                        || appearance.is_some()
+                        || world.is_some()
+                        || audio_type.is_some();
                     if !supported && tid != 142 && !(scene && tid < 0) {
                         continue;
                     }
@@ -441,6 +444,9 @@ impl Scan {
                         if let Some(kind) = world {
                             raw.set("world_type", kind.into());
                         }
+                        if let Some(kind) = audio_type {
+                            raw.set("audio_type", kind.into());
+                        }
                         if tid == 142 {
                             for entry in raw["m_Container"].array() {
                                 let target = result.ptr(&asset, &entry[1]["asset"]).id();
@@ -480,7 +486,8 @@ impl Scan {
                                     result.terrains.push(id);
                                 }
                                 if world.is_some()
-                                    || [104, 108].contains(&tid)
+                                    || audio_type.is_some()
+                                    || [82, 83, 104, 108].contains(&tid)
                                     || (scene
                                         && [12, 15, 23, 26, 87, 111, 137, 154, 157].contains(&tid))
                                 {
@@ -513,6 +520,10 @@ impl Scan {
                                 ("asset", name.clone().into()),
                                 ("path_id", obj.path.into()),
                                 ("type", tid.into()),
+                                (
+                                    "audio_type",
+                                    audio_type.map(Value::from).unwrap_or(Value::Nil),
+                                ),
                                 ("error", error.to_string().into()),
                             ]));
                         }
@@ -527,9 +538,10 @@ impl Scan {
             progress.update(
                 index + 1,
                 format!(
-                    "assets={} clips={} rigs={} errors={}",
+                    "assets={} clips={} sounds={} rigs={} errors={}",
                     result.assets.len(),
                     result.clips.len(),
+                    result.counts.get("83").copied().unwrap_or(0),
                     result.rigs.len(),
                     result.errors.len()
                 ),
@@ -649,12 +661,13 @@ fn vector(raw: &Value, axes: &str) -> Value {
 }
 
 fn component(tid: i32) -> bool {
-    tid < 0 || [4, 12, 15, 23, 26, 33, 87, 108, 111, 114, 137, 154].contains(&tid)
+    tid < 0 || [4, 12, 15, 23, 26, 33, 82, 87, 108, 111, 114, 137, 154].contains(&tid)
 }
 
 fn visual(tid: i32) -> bool {
     [
-        1, 4, 12, 15, 21, 23, 26, 27, 28, 33, 43, 48, 74, 87, 89, 104, 108, 111, 137, 154, 156, 157,
+        1, 4, 12, 15, 21, 23, 26, 27, 28, 33, 43, 48, 74, 82, 83, 87, 89, 104, 108, 111, 137, 154,
+        156, 157,
     ]
     .contains(&tid)
 }

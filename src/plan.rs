@@ -1,5 +1,5 @@
 use crate::{
-    animation, appearance,
+    animation, appearance, audio,
     progress::Progress,
     scan::{Node, Scan},
     value::{Fields, array, map, rawref, refs, serial, write, write_json, write_pack},
@@ -139,6 +139,10 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
     todo.extend(&scan.clips);
     todo.extend(&scan.rigs);
     todo.extend(&scan.appearances);
+    todo.extend(scan.nodes.iter().enumerate().filter_map(|(id, node)| {
+        let node = node.as_ref()?;
+        ([82, 83].contains(&node.kind) || !node.data["audio_type"].is_nil()).then_some(id as u32)
+    }));
     let (mut expanded, mut catalogs) = (HashSet::new(), Vec::new());
     for id in appearance::dependencies(scan) {
         todo.push(id);
@@ -214,6 +218,16 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                 todo.extend(data["go"].id());
             }
             33 => todo.extend(data["mesh"].id()),
+            82 => {
+                todo.extend(rawref(data, "m_audioClip"));
+                add_tree(
+                    scan,
+                    &children,
+                    &mut expanded,
+                    &mut todo,
+                    rawref(data, "m_GameObject"),
+                );
+            }
             12 | 15 | 23 | 26 | 87 | 137 => {
                 refs(data, &mut todo);
                 if node.kind == 23
@@ -399,7 +413,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                         },
                     );
                 }
-                104 | 108 | 157 => {
+                82 | 104 | 108 | 157 => {
                     settings.push(array([Value::from(*id), node.kind.into(), data.clone()]))
                 }
                 tid if tid < 0 => {
@@ -504,6 +518,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
                 .into(),
         ),
     ]);
+    let audio_coverage = audio::export(scan, output)?;
     let coverage = map([
         (
             "scenes",
@@ -531,6 +546,7 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
         ("animations", bindings.coverage),
         ("appearances", appearance_coverage),
         ("shaders", shader_coverage),
+        ("audio", audio_coverage),
     ]);
     write_json(&output.join("metadata/coverage.json"), &coverage)?;
 

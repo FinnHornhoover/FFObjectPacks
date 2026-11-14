@@ -1,11 +1,12 @@
 # FFObjectPacks
 
-FusionFall models, textures, animations and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks).
+FusionFall models, textures, animations, audio and terrain for wiki previews, shipped separately from [FFInfoPacks](https://github.com/FinnHornhoover/FFInfoPacks).
 
 | Folder | Contents |
 |---|---|
 | `models/` | Assembled prefab GLBs, shared buffers, source hierarchies, clothing rigs, appearances and shaders |
 | `animations/` | Separate glTF clips, source curves and model bindings |
+| `audio/` | Shared Ogg clips, animation sound events, region and emitter metadata |
 | `textures/` | Lossless WebP images and original-path index |
 | `areas/` | Scenes, compact terrain, colours, platforms and effect metadata |
 | `metadata/` | Materials, references and coverage |

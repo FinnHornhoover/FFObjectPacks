@@ -256,7 +256,7 @@ pub fn collect(scan: &Scan, selected: &BTreeSet<u32>, output: &Path) -> Result<B
         entry
             .as_map_mut()
             .unwrap()
-            .extend(data.as_map().unwrap().clone());
+            .extend(data.without(&["events"]).as_map().unwrap().clone());
         entry.set(
             "source_paths",
             array(aliases.remove(id).unwrap_or_default()),

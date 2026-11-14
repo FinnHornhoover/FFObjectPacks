@@ -31,6 +31,7 @@ pub struct Track {
 pub struct Clip {
     pub name: String,
     pub duration: f64,
+    pub events: Value,
     pub tracks: Vec<Track>,
     pub times: Vec<f32>,
 }
@@ -245,6 +246,13 @@ impl Clip {
         let duration = tracks
             .iter()
             .filter_map(|t| t.curve.keys.last().map(|k| k.time))
+            .chain(
+                raw["m_Events"]
+                    .array()
+                    .iter()
+                    .map(|event| event["time"].number())
+                    .filter(|time| time.is_finite()),
+            )
             .fold(0.0, f64::max);
         let rate = raw["m_SampleRate"].number();
         let rate = if rate.is_finite() && rate > 0.0 {
@@ -287,6 +295,7 @@ impl Clip {
         Ok(Self {
             name: raw["m_Name"].text().into(),
             duration,
+            events: crate::audio::events(&raw["m_Events"]),
             tracks,
             times: times.into_iter().map(f32::from_bits).collect(),
         })
