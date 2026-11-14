@@ -2,7 +2,7 @@ use crate::{
     convert::Store,
     download,
     pipeline::{Job, Preparation},
-    progress::log,
+    progress::{disk_usage, log},
     source::Index,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -251,6 +251,8 @@ pub async fn run() -> Result<()> {
         ),
     );
 
+    disk_usage(tag, "release start");
+
     let store = Arc::new(Store::new(Path::new("conversions"))?);
     let scanner = Arc::new(Semaphore::new(1));
     let workers = rayon::current_num_threads();
@@ -308,6 +310,7 @@ pub async fn run() -> Result<()> {
             .builds
             .insert(completed.name.clone(), completed.source);
         fs::remove_dir_all(completed.archive.parent().unwrap())?;
+        disk_usage(&completed.name, "upload complete; build files removed");
         log(
             &completed.name,
             "build",

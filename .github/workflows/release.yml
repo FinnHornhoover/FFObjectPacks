@@ -19,6 +19,20 @@ jobs:
       - name: Compile
         run: cargo build --release --locked
       - name: Build and release packs
-        run: target/release/ffobjectpacks release
+        run: |
+          monitor_disk() {
+            trap 'kill "${sleep_pid:-}" 2>/dev/null || true; exit 0' TERM
+            while true; do
+              echo "[$(date -u +%FT%TZ)] [disk] workspace filesystem"
+              df -h .
+              sleep 30 &
+              sleep_pid=$!
+              wait "$sleep_pid"
+            done
+          }
+          monitor_disk &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
+          target/release/ffobjectpacks release
         env:
           GH_TOKEN: ${{ github.token }}

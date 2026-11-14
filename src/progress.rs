@@ -1,6 +1,7 @@
 use std::{
     fmt::Display,
     path::Path,
+    process::Command,
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -9,6 +10,42 @@ pub fn log(build: &str, operation: &str, message: impl Display) {
     static STARTED: OnceLock<Instant> = OnceLock::new();
     let elapsed = STARTED.get_or_init(Instant::now).elapsed().as_secs_f64();
     eprintln!("[{elapsed:>7.1}s] [{build}] [{operation}] {message}");
+}
+
+pub fn disk_usage(build: &str, stage: &str) {
+    let paths: Vec<_> = ["conversions", "assets", "output", "artifacts", "target"]
+        .into_iter()
+        .filter(|path| Path::new(path).exists())
+        .collect();
+
+    log(
+        build,
+        "disk",
+        format!("{stage}; shared hard links counted once"),
+    );
+    if paths.is_empty() {
+        return;
+    }
+
+    match Command::new("du").args(["-sh"]).args(paths).output() {
+        Ok(output) => {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                log(build, "disk", line);
+            }
+            if !output.status.success() {
+                log(
+                    build,
+                    "disk",
+                    String::from_utf8_lossy(&output.stderr).trim(),
+                );
+            }
+        }
+        Err(error) => log(
+            build,
+            "disk",
+            format!("Cannot measure directories: {error}"),
+        ),
+    }
 }
 
 pub struct Progress {

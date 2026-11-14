@@ -1,5 +1,10 @@
 use crate::{
-    archive, convert::Store, download, pack, progress::log, release::Build, source::Record,
+    archive,
+    convert::Store,
+    download, pack,
+    progress::{disk_usage, log},
+    release::Build,
+    source::Record,
 };
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
@@ -222,6 +227,7 @@ impl Prepared {
                 started,
             } = self;
             let archive = job.archive();
+            disk_usage(&job.name, "finish start");
 
             if let Some(prepared) = extraction {
                 let workers = pool
@@ -254,6 +260,7 @@ impl Prepared {
 
                 archive::stamp(&output, &source.fingerprint)?;
                 fs::remove_dir_all(job.cache())?;
+                disk_usage(&job.name, "before packaging; source cache removed");
                 archive::create(&output, &archive)?;
                 fs::remove_dir_all(output)?;
             } else {
