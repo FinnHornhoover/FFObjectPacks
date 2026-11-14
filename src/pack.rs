@@ -156,6 +156,7 @@ pub fn finish(
                 ("world_metadata", true.into()),
                 ("particle_metadata", true.into()),
                 ("weapon_metadata", true.into()),
+                ("melee_trail_metadata", true.into()),
                 ("audio", true.into()),
                 ("audio_events", true.into()),
                 ("ambience_metadata", true.into()),

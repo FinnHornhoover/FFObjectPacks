@@ -141,7 +141,10 @@ pub fn build(scan: &Scan, output: &Path) -> Result<Plan> {
     todo.extend(&scan.appearances);
     todo.extend(scan.nodes.iter().enumerate().filter_map(|(id, node)| {
         let node = node.as_ref()?;
-        ([82, 83].contains(&node.kind) || !node.data["audio_type"].is_nil()).then_some(id as u32)
+        ([82, 83].contains(&node.kind)
+            || !node.data["audio_type"].is_nil()
+            || node.data["world_type"].text() == "SwordTrailManager")
+            .then_some(id as u32)
     }));
     let (mut expanded, mut catalogs) = (HashSet::new(), Vec::new());
     for id in appearance::dependencies(scan) {

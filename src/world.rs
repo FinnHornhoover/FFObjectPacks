@@ -11,6 +11,14 @@ pub fn classify(tree: &Tree) -> Option<&'static str> {
     let has = |name: &str| tree.children.iter().any(|field| field.name == name);
     if has("m_pBulletData") {
         Some("BulletTableScript")
+    } else if tree.children.iter().any(|field| {
+        field.name == "mat" && matches!(field.kind.as_str(), "PPtr<Material>" | "PPtr<$Material>")
+    }) && tree
+        .children
+        .iter()
+        .all(|field| field.name.starts_with("m_") || field.name == "mat")
+    {
+        Some("SwordTrailManager")
     } else if has("fogColor") && has("skyColor") && has("lightColor") {
         Some("DongColorSetup")
     } else if has("attributes") {
