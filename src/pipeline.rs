@@ -1,9 +1,4 @@
-use crate::{
-    archive, download,
-    progress::{disk_usage, log},
-    release::Build,
-    source::Record,
-};
+use crate::{archive, download, progress::log, release::Build, source::Record};
 use anyhow::{Context, Result, ensure};
 use reqwest::Client;
 use serde_json::Value;
@@ -174,7 +169,6 @@ impl Prepared {
             started,
         } = self;
         let name = job.name.clone();
-        disk_usage(&name, "finish start");
 
         if extract {
             let mut command = Command::new(std::env::current_exe()?);
@@ -220,7 +214,6 @@ impl Prepared {
                 let output = job.output();
                 archive::stamp(&output, &source.fingerprint)?;
                 fs::remove_dir_all(job.cache())?;
-                disk_usage(&job.name, "before packaging; source cache removed");
                 archive::create(&output, &archive)?;
                 fs::remove_dir_all(output)?;
             } else {

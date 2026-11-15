@@ -19,39 +19,6 @@ jobs:
       - name: Compile
         run: cargo build --release --locked
       - name: Build and release packs
-        run: |
-          build_shell_pid=$BASHPID
-          monitor_resources() {
-            trap 'kill "${sleep_pid:-}" 2>/dev/null || true; exit 0' TERM
-            while true; do
-              echo "[$(date -u +%FT%TZ)] [disk] workspace filesystem"
-              df -h .
-              echo "[$(date -u +%FT%TZ)] [memory] system (MiB)"
-              free -m
-              coordinator_pid=$(pgrep -P "$build_shell_pid" -x ffobjectpacks || true)
-              if [[ -n "$coordinator_pid" ]]; then
-                worker_pid=$(pgrep -P "$coordinator_pid" -x ffobjectpacks || true)
-                for extractor_pid in $coordinator_pid $worker_pid; do
-                  [[ -r "/proc/$extractor_pid/status" ]] || continue
-                  role=coordinator
-                  [[ "$extractor_pid" == "$coordinator_pid" ]] || role=worker
-                  echo "[$(date -u +%FT%TZ)] [memory] $role pid=$extractor_pid"
-                  awk '
-                    /^VmRSS:/ { printf "rss=%.1f MiB; ", $2 / 1024 }
-                    /^VmHWM:/ { printf "peak_rss=%.1f MiB; ", $2 / 1024 }
-                    /^VmSwap:/ { printf "swap=%.1f MiB; ", $2 / 1024 }
-                    END { print "" }
-                  ' "/proc/$extractor_pid/status" 2>/dev/null || true
-                done
-              fi
-              sleep 30 &
-              sleep_pid=$!
-              wait "$sleep_pid"
-            done
-          }
-          monitor_resources &
-          monitor_pid=$!
-          trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
-          target/release/ffobjectpacks release
+        run: target/release/ffobjectpacks release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,7 +1,7 @@
 use crate::{
     download,
     pipeline::{Job, Preparation},
-    progress::{disk_usage, log},
+    progress::log,
     source::Index,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -249,8 +249,6 @@ pub async fn run() -> Result<()> {
         ),
     );
 
-    disk_usage(tag, "release start");
-
     let mut jobs = builds.into_iter().map(|(name, entry)| {
         let previous = previous.get(&name).and_then(|record| {
             released
@@ -298,7 +296,6 @@ pub async fn run() -> Result<()> {
             .builds
             .insert(completed.name.clone(), completed.source);
         fs::remove_dir_all(completed.archive.parent().unwrap())?;
-        disk_usage(&completed.name, "upload complete; build files removed");
         log(
             &completed.name,
             "build",
