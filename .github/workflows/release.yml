@@ -28,15 +28,21 @@ jobs:
               df -h .
               echo "[$(date -u +%FT%TZ)] [memory] system (MiB)"
               free -m
-              extractor_pid=$(pgrep -P "$build_shell_pid" -x ffobjectpacks || true)
-              if [[ -n "$extractor_pid" && -r "/proc/$extractor_pid/status" ]]; then
-                echo "[$(date -u +%FT%TZ)] [memory] extractor pid=$extractor_pid"
-                awk '
-                  /^VmRSS:/ { printf "rss=%.1f MiB; ", $2 / 1024 }
-                  /^VmHWM:/ { printf "peak_rss=%.1f MiB; ", $2 / 1024 }
-                  /^VmSwap:/ { printf "swap=%.1f MiB; ", $2 / 1024 }
-                  END { print "" }
-                ' "/proc/$extractor_pid/status" 2>/dev/null || true
+              coordinator_pid=$(pgrep -P "$build_shell_pid" -x ffobjectpacks || true)
+              if [[ -n "$coordinator_pid" ]]; then
+                worker_pid=$(pgrep -P "$coordinator_pid" -x ffobjectpacks || true)
+                for extractor_pid in $coordinator_pid $worker_pid; do
+                  [[ -r "/proc/$extractor_pid/status" ]] || continue
+                  role=coordinator
+                  [[ "$extractor_pid" == "$coordinator_pid" ]] || role=worker
+                  echo "[$(date -u +%FT%TZ)] [memory] $role pid=$extractor_pid"
+                  awk '
+                    /^VmRSS:/ { printf "rss=%.1f MiB; ", $2 / 1024 }
+                    /^VmHWM:/ { printf "peak_rss=%.1f MiB; ", $2 / 1024 }
+                    /^VmSwap:/ { printf "swap=%.1f MiB; ", $2 / 1024 }
+                    END { print "" }
+                  ' "/proc/$extractor_pid/status" 2>/dev/null || true
+                done
               fi
               sleep 30 &
               sleep_pid=$!

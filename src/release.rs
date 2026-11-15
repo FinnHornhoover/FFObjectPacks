@@ -1,5 +1,4 @@
 use crate::{
-    convert::Store,
     download,
     pipeline::{Job, Preparation},
     progress::{disk_usage, log},
@@ -8,8 +7,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, fs, path::Path, process::Command, sync::Arc};
-use tokio::sync::Semaphore;
+use std::{collections::BTreeMap, fs, path::Path, process::Command};
 
 const INFO_REPOSITORY: &str = "FinnHornhoover/FFInfoPacks";
 
@@ -253,14 +251,6 @@ pub async fn run() -> Result<()> {
 
     disk_usage(tag, "release start");
 
-    let store = Arc::new(Store::new(Path::new("conversions"))?);
-    let scanner = Arc::new(Semaphore::new(1));
-    let workers = rayon::current_num_threads();
-    let overlap_pool = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(workers.saturating_sub(1).max(1))
-            .build()?,
-    );
     let mut jobs = builds.into_iter().map(|(name, entry)| {
         let previous = previous.get(&name).and_then(|record| {
             released
@@ -275,17 +265,15 @@ pub async fn run() -> Result<()> {
     });
     let mut pending = jobs
         .next()
-        .map(|job| Preparation::start(job, client.clone(), scanner.clone()));
+        .map(|job| Preparation::start(job, client.clone()));
 
-    while let Some(mut current) = pending.take() {
-        current.wait_download().await?;
+    while let Some(current) = pending.take() {
+        let prepared = current.finish().await?;
         pending = jobs
             .next()
-            .map(|job| Preparation::start(job, client.clone(), scanner.clone()));
+            .map(|job| Preparation::start(job, client.clone()));
 
-        let prepared = current.finish().await?;
-        let pool = pending.as_ref().map(|_| overlap_pool.clone());
-        let completed = prepared.finish(store.clone(), pool).await?;
+        let completed = prepared.finish().await?;
 
         log(
             &completed.name,

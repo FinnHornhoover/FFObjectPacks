@@ -224,19 +224,31 @@ fn finite_json(value: &Value) -> Json {
     }
 }
 
+const CLIP_CACHE_BYTES: usize = 256 * 1024 * 1024;
+
+struct CachedClip {
+    clip: Arc<Clip>,
+    bytes: usize,
+    used: u64,
+}
+
 struct Exporter<'a> {
     index: &'a Index,
     plan: &'a Plan,
     output: &'a Path,
     bindings: HashMap<u32, Value>,
-    clips: HashMap<u32, Arc<Clip>>,
+    clips: HashMap<u32, CachedClip>,
+    clip_bytes: usize,
+    clip_clock: u64,
     geometry: HashMap<u32, Json>,
 }
 
 impl Exporter<'_> {
     fn clip(&mut self, id: u32) -> Result<Arc<Clip>> {
-        if let Some(clip) = self.clips.get(&id) {
-            return Ok(clip.clone());
+        self.clip_clock += 1;
+        if let Some(entry) = self.clips.get_mut(&id) {
+            entry.used = self.clip_clock;
+            return Ok(entry.clip.clone());
         }
         let node = self
             .plan
@@ -245,7 +257,27 @@ impl Exporter<'_> {
             .context("Clip is absent from selected resources")?;
         let raw = unpack(&fs::read(self.output.join(node.data["file"].text()))?)?;
         let clip = Arc::new(Clip::decode(&raw)?);
-        self.clips.insert(id, clip.clone());
+        let bytes = clip.memory_size();
+        if bytes <= CLIP_CACHE_BYTES {
+            while self.clip_bytes + bytes > CLIP_CACHE_BYTES {
+                let oldest = *self
+                    .clips
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.used)
+                    .unwrap()
+                    .0;
+                self.clip_bytes -= self.clips.remove(&oldest).unwrap().bytes;
+            }
+            self.clips.insert(
+                id,
+                CachedClip {
+                    clip: clip.clone(),
+                    bytes,
+                    used: self.clip_clock,
+                },
+            );
+            self.clip_bytes += bytes;
+        }
         Ok(clip)
     }
 
@@ -281,6 +313,8 @@ pub fn export(index: &Index, plan: &mut Plan, output: &Path) -> Result<()> {
         output,
         bindings,
         clips: HashMap::new(),
+        clip_bytes: 0,
+        clip_clock: 0,
         geometry: HashMap::new(),
     };
     let roots = &index.roots;
@@ -298,7 +332,14 @@ pub fn export(index: &Index, plan: &mut Plan, output: &Path) -> Result<()> {
                 failed.push(json!({"object":root,"error":format!("{error:#}")}));
             }
         }
-        progress.update(i + 1, format!("warnings={issues} failed={}", failed.len()));
+        progress.update(
+            i + 1,
+            format!(
+                "warnings={issues} failed={} clip_cache={:.1}MiB",
+                failed.len(),
+                exporter.clip_bytes as f64 / (1024.0 * 1024.0)
+            ),
+        );
     }
     drop(exporter);
     for (id, entry) in &entries {

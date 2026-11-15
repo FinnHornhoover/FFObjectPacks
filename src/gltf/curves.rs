@@ -182,7 +182,54 @@ impl Curve {
     }
 }
 
+fn value_heap_size(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.as_bytes().len(),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => bytes.capacity(),
+        Value::Array(values) => {
+            values.capacity() * size_of::<Value>()
+                + values.iter().map(value_heap_size).sum::<usize>()
+        }
+        Value::Map(entries) => {
+            entries.capacity() * size_of::<(Value, Value)>()
+                + entries
+                    .iter()
+                    .map(|(key, value)| value_heap_size(key) + value_heap_size(value))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
 impl Clip {
+    pub fn memory_size(&self) -> usize {
+        size_of::<Self>()
+            + self.name.capacity()
+            + self.times.capacity() * size_of::<f32>()
+            + value_heap_size(&self.events)
+            + self.tracks.capacity() * size_of::<Track>()
+            + self
+                .tracks
+                .iter()
+                .map(|track| {
+                    track.path.capacity()
+                        + track.property.capacity()
+                        + track.curve.keys.capacity() * size_of::<Key>()
+                        + track
+                            .curve
+                            .keys
+                            .iter()
+                            .map(|key| {
+                                (key.value.capacity()
+                                    + key.incoming.capacity()
+                                    + key.outgoing.capacity())
+                                    * size_of::<f64>()
+                            })
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
     pub fn decode(raw: &Value) -> Result<Self> {
         let mut tracks = Vec::new();
         for (field, property) in [

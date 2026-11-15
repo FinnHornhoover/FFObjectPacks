@@ -1,19 +1,14 @@
 use crate::{
-    archive,
-    convert::Store,
-    download, pack,
+    archive, download,
     progress::{disk_usage, log},
     release::Build,
     source::Record,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, ensure};
 use reqwest::Client;
 use serde_json::Value;
-use std::{fs, path::PathBuf, sync::Arc, time::Instant};
-use tokio::{
-    sync::{Semaphore, oneshot},
-    task::JoinHandle,
-};
+use std::{fs, path::PathBuf, process::Stdio, time::Instant};
+use tokio::{process::Command, task::JoinHandle};
 
 pub struct Job {
     pub name: String,
@@ -38,31 +33,18 @@ impl Job {
 }
 
 pub struct Preparation {
-    downloaded: oneshot::Receiver<()>,
     task: JoinHandle<Result<Prepared>>,
 }
 
 impl Preparation {
-    pub fn start(job: Job, client: Client, scanner: Arc<Semaphore>) -> Self {
-        let (downloaded, ready) = oneshot::channel();
+    pub fn start(job: Job, client: Client) -> Self {
         let name = job.name.clone();
         let task = tokio::spawn(async move {
-            prepare(job, client, scanner, downloaded)
+            prepare(job, client)
                 .await
                 .with_context(|| format!("[{name}] [prepare] failed"))
         });
-        Self {
-            downloaded: ready,
-            task,
-        }
-    }
-
-    pub async fn wait_download(&mut self) -> Result<()> {
-        if (&mut self.downloaded).await.is_err() {
-            (&mut self.task).await??;
-            bail!("Preparation ended before reporting download completion");
-        }
-        Ok(())
+        Self { task }
     }
 
     pub async fn finish(mut self) -> Result<Prepared> {
@@ -78,18 +60,13 @@ impl Drop for Preparation {
 
 pub struct Prepared {
     job: Job,
-    extraction: Option<pack::Prepared>,
+    extract: bool,
     source: Record,
     manifest: Value,
     started: Instant,
 }
 
-async fn prepare(
-    job: Job,
-    client: Client,
-    scanner: Arc<Semaphore>,
-    downloaded: oneshot::Sender<()>,
-) -> Result<Prepared> {
+async fn prepare(job: Job, client: Client) -> Result<Prepared> {
     let started = Instant::now();
     log(&job.name, "prepare", "started");
 
@@ -162,42 +139,18 @@ async fn prepare(
         );
     }
 
-    let extraction = if reuse {
-        let _ = downloaded.send(());
-        None
-    } else {
-        if !cache_downloaded {
-            source = Record::new(
-                job.entry.zip_name(&job.name),
-                download::cache(&client, &resolved, &cache).await?,
-            )?;
-        }
-        let output = job.output();
-
-        // Acquire before notifying the driver so the next download overlaps this scan.
-        if scanner.available_permits() == 0 {
-            log(
-                &job.name,
-                "prepare/wait",
-                "cache downloaded; waiting for the current scan to finish",
-            );
-        }
-        let permit = scanner.acquire_owned().await?;
-        let _ = downloaded.send(());
-        let prepared = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            pack::prepare(&cache, &output, None)
-        })
-        .await??;
-
-        Some(prepared)
-    };
+    if !reuse && !cache_downloaded {
+        source = Record::new(
+            job.entry.zip_name(&job.name),
+            download::cache(&client, &resolved, &cache).await?,
+        )?;
+    }
 
     log(&job.name, "prepare", "ready; awaiting finish stage");
 
     Ok(Prepared {
         job,
-        extraction,
+        extract: !reuse,
         source,
         manifest: resolved.manifest,
         started,
@@ -212,52 +165,59 @@ pub struct Completed {
 }
 
 impl Prepared {
-    pub async fn finish(
-        self,
-        store: Arc<Store>,
-        pool: Option<Arc<rayon::ThreadPool>>,
-    ) -> Result<Completed> {
-        let name = self.job.name.clone();
+    pub async fn finish(self) -> Result<Completed> {
+        let Self {
+            job,
+            extract,
+            source,
+            manifest,
+            started,
+        } = self;
+        let name = job.name.clone();
+        disk_usage(&name, "finish start");
+
+        if extract {
+            let mut command = Command::new(std::env::current_exe()?);
+            command
+                .arg("extract")
+                .arg(job.cache())
+                .arg(job.output())
+                .arg("--build")
+                .arg(&name)
+                .arg("--revision")
+                .arg(job.entry.revision.to_string())
+                .stdin(Stdio::null())
+                .kill_on_drop(true);
+            if let Some(nickname) = &job.entry.nickname {
+                command.arg("--nickname").arg(nickname);
+            }
+
+            let mut worker = command
+                .spawn()
+                .with_context(|| format!("[{name}] [worker] cannot start extractor"))?;
+            log(
+                &name,
+                "worker",
+                format!(
+                    "started; pid={}; scan and extraction in a fresh process",
+                    worker.id().unwrap()
+                ),
+            );
+            let status = worker
+                .wait()
+                .await
+                .with_context(|| format!("[{name}] [worker] cannot wait for extractor"))?;
+            ensure!(
+                status.success(),
+                "[{name}] [worker] extraction failed: {status}"
+            );
+            log(&name, "worker", "complete; process memory released");
+        }
+
         tokio::task::spawn_blocking(move || -> Result<Completed> {
-            let Self {
-                job,
-                extraction,
-                source,
-                manifest,
-                started,
-            } = self;
             let archive = job.archive();
-            disk_usage(&job.name, "finish start");
-
-            if let Some(prepared) = extraction {
-                let workers = pool
-                    .as_ref()
-                    .map(|pool| pool.current_num_threads())
-                    .unwrap_or_else(rayon::current_num_threads);
-                log(
-                    &job.name,
-                    "finish",
-                    format!("started; {workers} conversion threads"),
-                );
-
+            if extract {
                 let output = job.output();
-                let extract = || {
-                    pack::finish(
-                        &job.name,
-                        job.entry.revision,
-                        job.entry.nickname.as_deref(),
-                        prepared,
-                        &output,
-                        &store,
-                    )
-                };
-
-                if let Some(pool) = pool {
-                    pool.install(extract)?;
-                } else {
-                    extract()?;
-                }
-
                 archive::stamp(&output, &source.fingerprint)?;
                 fs::remove_dir_all(job.cache())?;
                 disk_usage(&job.name, "before packaging; source cache removed");
