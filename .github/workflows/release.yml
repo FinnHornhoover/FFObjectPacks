@@ -20,17 +20,30 @@ jobs:
         run: cargo build --release --locked
       - name: Build and release packs
         run: |
-          monitor_disk() {
+          build_shell_pid=$BASHPID
+          monitor_resources() {
             trap 'kill "${sleep_pid:-}" 2>/dev/null || true; exit 0' TERM
             while true; do
               echo "[$(date -u +%FT%TZ)] [disk] workspace filesystem"
               df -h .
+              echo "[$(date -u +%FT%TZ)] [memory] system (MiB)"
+              free -m
+              extractor_pid=$(pgrep -P "$build_shell_pid" -x ffobjectpacks || true)
+              if [[ -n "$extractor_pid" && -r "/proc/$extractor_pid/status" ]]; then
+                echo "[$(date -u +%FT%TZ)] [memory] extractor pid=$extractor_pid"
+                awk '
+                  /^VmRSS:/ { printf "rss=%.1f MiB; ", $2 / 1024 }
+                  /^VmHWM:/ { printf "peak_rss=%.1f MiB; ", $2 / 1024 }
+                  /^VmSwap:/ { printf "swap=%.1f MiB; ", $2 / 1024 }
+                  END { print "" }
+                ' "/proc/$extractor_pid/status" 2>/dev/null || true
+              fi
               sleep 30 &
               sleep_pid=$!
               wait "$sleep_pid"
             done
           }
-          monitor_disk &
+          monitor_resources &
           monitor_pid=$!
           trap 'kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true' EXIT
           target/release/ffobjectpacks release
